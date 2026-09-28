@@ -81,6 +81,18 @@ python3 tools/build_network.py   # track_shapes.json があれば自動で取り
 経路が見つからない区間や直線距離の 3 倍を超える遠回りになる区間は、直線のまま残してログに出します。
 取り込んだ場合は、公開ページの出典に「© OpenStreetMap contributors (ODbL)」を追記してください。
 
+### 実際の時刻表で走らせる (GTFS / GTFS-JP)
+
+```sh
+python3 tools/import_gtfs.py feed.zip --date 20261005 \
+    --group iyotetsu_gtfs --group-name "伊予鉄 (時刻表データ)" \
+    --replaces iyo_takahama,iyo_yokogawara,iyo_gunchu
+python3 tools/build_network.py   # tools/gtfs_services.json があれば自動で取り込む
+```
+
+指定日に運行する便だけを取り込み、便ごとの発着時刻でそのまま走らせます（`--replaces` の路線の推計ダイヤは置き換え）。
+shapes.txt があればその線形を使います。発車案内・停車駅一覧・到達圏もすべて時刻表の時刻で計算されます。
+
 ## 現状の制約 (プロトタイプ)
 
 - **列車位置は実際の運行ではありません。** 公開時刻表を参考にした運転間隔の概算で、遅延や臨時列車は反映されません。
