@@ -355,7 +355,6 @@ def main():
     lines = build_lines(by_line)
     services = build_services(lines)
     net = dict(
-        generated="tools/build_network.py",
         source="駅座標: 駅データ.jp (via piuccio/open-data-jp-railway-stations)",
         groups=GROUPS,
         lines=[dict(id=k, name=v["name"], operator=v["operator"], group=v["group"], kind=v["kind"],
@@ -365,7 +364,7 @@ def main():
         services=services,
     )
     with open(OUT, "w", encoding="utf-8") as f:
-        f.write("// 自動生成ファイル: tools/build_network.py で再生成してください\n")
+        f.write("// 路線・駅・運行パターンのデータ (自動生成)\n")
         f.write("window.NETWORK = ")
         json.dump(net, f, ensure_ascii=False, separators=(",", ":"))
         f.write(";\n")
