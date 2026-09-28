@@ -305,18 +305,46 @@ def build_lines(by_line):
             seq = order_by_code(stations)
             if ln.get("reverse"):
                 seq.reverse()
-        lines[key] = dict(ln, stations=[(s[1], [s[2], s[3]]) for s in seq])
+        lines[key] = dict(ln, key=key, stations=[(s[1], [s[2], s[3]]) for s in seq])
+    shapes = load_shapes()
+    for line in lines.values():
+        line["points"] = expand_line(line, shapes)
     return lines
 
 
+SHAPES_FILE = os.path.join(HERE, "track_shapes.json")
+
+
+def load_shapes():
+    """build_tracks.py が作った駅間の線路形状 (無ければ空)。"""
+    if not os.path.exists(SHAPES_FILE):
+        return {}
+    return json.load(open(SHAPES_FILE, encoding="utf-8"))
+
+
+def expand_line(line, shapes):
+    """駅の並びに、駅間の線路形状の中間点 (名前 None) を差し込んだ点列。"""
+    segs = shapes.get(line["key"])
+    if not segs or len(segs) != len(line["stations"]) - 1:
+        return [(n, c) for n, c in line["stations"]]
+    out = []
+    for i, (n, c) in enumerate(line["stations"]):
+        out.append((n, c))
+        if i < len(segs):
+            out.extend((None, p) for p in segs[i])
+    return out
+
+
 def slice_line(line, a, b):
-    names = [s[0] for s in line["stations"]]
+    pts = line["points"]
     if a is None:
-        return list(line["stations"])
-    i, j = names.index(a), names.index(b)
+        return list(pts)
+    # 駅名は路線内で一意 (環状線のように同じ駅を 2 度通る路線は a=None で使う)
+    idx = {n: k for k, (n, _) in enumerate(pts) if n is not None}
+    i, j = idx[a], idx[b]
     if i <= j:
-        return line["stations"][i:j + 1]
-    return list(reversed(line["stations"][j:i + 1]))
+        return pts[i:j + 1]
+    return list(reversed(pts[j:i + 1]))
 
 
 def build_services(lines):
@@ -325,12 +353,12 @@ def build_services(lines):
         path = []
         for (lk, a, b) in sv["route"]:
             part = slice_line(lines[lk], a, b)
-            if path and path[-1][0] == part[0][0]:
+            if path and part[0][0] is not None and path[-1][0] == part[0][0]:
                 part = part[1:]
             path.extend(part)
         if sv.get("reverse"):
             path.reverse()
-        stops = set(sv.get("stops") or [p[0] for p in path])
+        stops = set(sv.get("stops") or [p[0] for p in path if p[0] is not None])
         missing = stops - {p[0] for p in path}
         if missing:
             raise SystemExit(f"{sv['id']}: stops not on route: {missing}")
@@ -341,7 +369,7 @@ def build_services(lines):
             cars=sv["cars"], carLength=sv["carLength"], width=sv["width"], height=sv["height"],
             speed=sv["speed"], dwell=sv["dwell"], accel=sv["accel"],
             loop=bool(sv.get("loop")), both=bool(sv.get("both")), offset=sv.get("offset", 0),
-            path=[[RENAME.get(n, n), c, 1 if n in stops else 0] for n, c in path],
+            path=[[RENAME.get(n, n) if n else "", c, 1 if n in stops else 0] for n, c in path],
         )
         for k in ("bands", "departures", "departuresReturn", "note"):
             if k in sv:
@@ -359,7 +387,8 @@ def main():
         groups=GROUPS,
         lines=[dict(id=k, name=v["name"], operator=v["operator"], group=v["group"], kind=v["kind"],
                     color=v["color"],
-                    stations=[[RENAME.get(n, n), c] for n, c in v["stations"]])
+                    stations=[[RENAME.get(n, n), c] for n, c in v["stations"]],
+                    **({"shape": [c for _, c in v["points"]]} if len(v["points"]) > len(v["stations"]) else {}))
                for k, v in lines.items()],
         services=services,
     )

@@ -65,6 +65,18 @@ tools/build_network.py  data/network.js の生成スクリプト
 python3 tools/build_network.py   # 駅座標データを取得して data/network.js を再生成
 ```
 
+### 線路を実際の形にする (OpenStreetMap)
+
+```sh
+python3 tools/build_tracks.py    # Overpass API から四国の線路を取得し、駅間の形状を tools/track_shapes.json に保存
+python3 tools/build_network.py   # track_shapes.json があれば自動で取り込む
+./tools/sync_public.sh           # 公開リポジトリへコピー
+```
+
+駅から 350m 以内の線路に吸着させ、線路網の最短経路で駅間をつなぎます（側線・渡り線は避ける）。
+経路が見つからない区間や直線距離の 3 倍を超える遠回りになる区間は、直線のまま残してログに出します。
+取り込んだ場合は、公開ページの出典に「© OpenStreetMap contributors (ODbL)」を追記してください。
+
 ## 現状の制約 (プロトタイプ)
 
 - **列車位置は実際の運行ではありません。** 公開時刻表を参考にした運転間隔の概算で、遅延や臨時列車は反映されません。
