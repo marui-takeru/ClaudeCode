@@ -4,7 +4,7 @@
 set -eu
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="${1:-$SRC/../../minishikoku3d}"
-cp "$SRC/index.html" "$SRC/DATA_SOURCES.md" "$DEST/"
+cp "$SRC/index.html" "$SRC/DATA_SOURCES.md" "$SRC/CHANGELOG.md" "$DEST/"
 for d in css js data; do
   mkdir -p "$DEST/$d"
   cp "$SRC/$d/"* "$DEST/$d/"
