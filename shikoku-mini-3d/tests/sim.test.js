@@ -1,0 +1,127 @@
+// 運行シミュレーションのテスト:  node --test tests/
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+function load(network) {
+  const ctx = { window: {} };
+  vm.createContext(ctx);
+  const root = path.join(__dirname, '..');
+  if (network) ctx.window.NETWORK = network;
+  else vm.runInContext(fs.readFileSync(path.join(root, 'data/network.js'), 'utf8'), ctx);
+  vm.runInContext(fs.readFileSync(path.join(root, 'js/sim.js'), 'utf8'), ctx);
+  return ctx.window;
+}
+
+const W = load();
+const { Simulator, easeTrapezoid, parseTime } = W.Sim;
+const sim = new Simulator(W.NETWORK);
+const pattern = id => sim.patterns.find(p => p.service.id === id);
+const H = h => h * 3600;
+
+test('台形速度の位置関数は 0→1 で単調増加', () => {
+  let prev = -1;
+  for (let u = 0; u <= 1.0001; u += 0.01) {
+    const e = easeTrapezoid(Math.min(u, 1), 0.2);
+    assert.ok(e >= prev - 1e-12);
+    prev = e;
+  }
+  assert.equal(easeTrapezoid(0, 0.2), 0);
+  assert.ok(Math.abs(easeTrapezoid(1, 0.2) - 1) < 1e-9);
+});
+
+test('主な系統の所要時間が実際の値に近い', () => {
+  const minutes = id => pattern(id).durationOf(0) / 60;
+  assert.ok(minutes('iyo3') > 15 && minutes('iyo3') < 25, `3系統 ${minutes('iyo3')}`);
+  assert.ok(minutes('takahama') > 15 && minutes('takahama') < 25, `高浜線 ${minutes('takahama')}`);
+  assert.ok(minutes('ishizuchi') > 120 && minutes('ishizuchi') < 170, `いしづち ${minutes('ishizuchi')}`);
+});
+
+test('深夜は運行せず、昼は多くの列車が走る', () => {
+  assert.equal(sim.trainsAt(H(3)).length, 0);
+  assert.ok(sim.trainsAt(H(12)).length > 80);
+});
+
+test('日付をまたぐ列車も数える', () => {
+  const late = sim.trainsAt(H(23) + 50 * 60);
+  const after = sim.trainsAt(10 * 60);
+  assert.ok(late.length > 0);
+  // 0:10 に走っている列車はすべて前日の発車
+  for (const tr of after) assert.ok(tr.dep > H(20));
+});
+
+test('発車待ちの列車は始発駅に停車している', () => {
+  const trains = sim.trainsAt(H(10) + 123);
+  const waiting = trains.filter(t => t.waiting);
+  assert.ok(waiting.length > 0);
+  for (const t of waiting) {
+    assert.equal(t.dist, 0);
+    assert.ok(t.elapsed < 0 && t.elapsed >= -t.pattern.layover);
+  }
+});
+
+test('列車の位置は経路上にあり、時間とともに進む', () => {
+  const p = pattern('yokogawara');
+  let prev = -1;
+  for (let e = 0; e <= p.durationOf(0); e += 15) {
+    const st = p.stateAt(e);
+    assert.ok(st.dist >= prev - 1e-6 && st.dist <= p.length + 1e-6);
+    prev = st.dist;
+  }
+});
+
+test('発車案内は近い順で、その駅を発車する列車だけ', () => {
+  const line = W.NETWORK.lines.find(l => l.id === 'iyo_shieki');
+  const [name, c] = line.stations.find(s => s[0] === '大街道');
+  const deps = sim.departuresAt(name, c, H(8), { limit: 20 });
+  assert.ok(deps.length === 20);
+  for (let i = 1; i < deps.length; i++) assert.ok(deps[i].wait >= deps[i - 1].wait);
+  for (const d of deps) assert.ok(d.pattern.path.some(q => q[0] === '大街道' && q[2]));
+});
+
+test('到達圏: 出発駅は 0 分、遠い駅ほど時間がかかり、上限を超えない', () => {
+  const line = W.NETWORK.lines.find(l => l.id === 'iyo_takahama');
+  const [name, c] = line.stations[0];
+  const r = sim.reachFrom(name, c, H(8), { maxMinutes: 60 });
+  const byName = n => r.find(x => x.name === n);
+  assert.equal(byName(name).minutes, 0);
+  assert.ok(byName('高浜').minutes < 40);
+  assert.ok(byName('古町').minutes < byName('高浜').minutes);
+  for (const x of r) assert.ok(x.minutes >= 0 && x.minutes <= 60);
+  // 物理的な下限: 直線距離を時速 100km で割った時間より短くはならない
+  for (const x of r) {
+    const d = W.Sim.haversine(c, x.c);
+    assert.ok(x.minutes * 60 + 1 >= d / (100 / 3.6) - 60, `${x.name} ${x.minutes}`);
+  }
+});
+
+test('便ごとの時刻 (trips) を持つ系統は、その時刻どおりに走る', () => {
+  const base = W.NETWORK.services.find(s => s.id === 'takahama');
+  const stops = base.path.filter(p => p[2]).length;
+  const mk = (dep, run) => {
+    const t = [];
+    let x = 0;
+    for (let k = 0; k < stops; k++) {
+      // 始発駅は発車時刻 = 0 (import_gtfs.py と同じ)、途中駅は 30 秒停車
+      const d = k === 0 || k === stops - 1 ? x : x + 30;
+      t.push([x, d]);
+      x = d + run;
+    }
+    return { dep, t };
+  };
+  const net = { ...W.NETWORK, services: [{ ...base, id: 'g', both: false, bands: undefined, trips: [mk(H(8), 120), mk(H(9), 240)] }] };
+  const W2 = load(net);
+  const s2 = new W2.Sim.Simulator(W2.NETWORK);
+  const p = s2.patterns[0];
+  assert.equal(p.durationOf(0), (stops - 1) * 120 + (stops - 2) * 30);
+  assert.equal(p.durationOf(1), (stops - 1) * 240 + (stops - 2) * 30);
+  const tr = s2.trainsAt(H(9) + 240 + 15).find(x => x.dep === H(9));
+  assert.equal(tr.stopped, true); // 2 駅目に停車中 (240 秒で到着、30 秒停車)
+  assert.equal(p.path[tr.at][0], p.path.filter(q => q[2])[1][0]);
+});
+
+test('parseTime は HH:MM を秒に変換する', () => {
+  assert.equal(parseTime('07:45'), 7 * 3600 + 45 * 60);
+});
