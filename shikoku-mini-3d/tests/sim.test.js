@@ -38,7 +38,7 @@ test('主な系統の所要時間が実際の値に近い', () => {
   // 高浜〜横河原の直通 (実際はおよそ 50 分)
   assert.ok(minutes('takahama') > 45 && minutes('takahama') < 60, `高浜・横河原線 ${minutes('takahama')}`);
   assert.ok(minutes('gunchu') > 20 && minutes('gunchu') < 30, `郡中線 ${minutes('gunchu')}`);
-  assert.ok(minutes('ishizuchi') > 120 && minutes('ishizuchi') < 170, `いしづち ${minutes('ishizuchi')}`);
+  assert.ok(minutes('shiokaze') > 120 && minutes('shiokaze') < 170, `しおかぜ 児島→松山 ${minutes('shiokaze')}`);
 });
 
 test('深夜は運行せず、昼は多くの列車が走る', () => {
@@ -167,4 +167,21 @@ test('平日と土休日で推計ダイヤの本数が変わる (伊予鉄 郊�
   const weekday = count();
   s2.setDayType('holiday');
   assert.ok(weekday > count(), `平日 ${weekday} 本`);
+});
+
+test('瀬戸大橋線: 列車は線路の点列の上を走る (児島〜宇多津は約 18.1km)', () => {
+  const line = W.NETWORK.lines.find(l => l.id === 'jr_seto_ohashi');
+  assert.ok(line && line.shape && line.shape.length > 20, '国土数値情報の線形がある');
+  const p = pattern('nanpu');
+  const kojima = p.path.findIndex(q => q[0] === '児島');
+  const utazu = p.path.findIndex(q => q[0] === '宇多津');
+  const km = (p.cum[utazu] - p.cum[kojima]) / 1000;
+  assert.ok(km > 17.8 && km < 18.4, `児島〜宇多津 ${km.toFixed(2)} km`);
+  // 橋の途中の位置が、線路の点列から 1m 以内にある
+  const d = (p.cum[kojima] + p.cum[utazu]) / 2;
+  const pt = p.pointAt(d).c;
+  const near = Math.min(...line.shape.map((c, i) => i && W.Sim.haversine(pt, c)).filter(Boolean));
+  const seg = line.shape.findIndex((c, i) => i > 0 && W.Sim.haversine(line.shape[i - 1], pt) + W.Sim.haversine(pt, c)
+    - W.Sim.haversine(line.shape[i - 1], c) < 1);
+  assert.ok(seg > 0, `線路から外れていない (最寄りの点まで ${near.toFixed(0)} m)`);
 });

@@ -79,6 +79,11 @@ LINES = {
                          kind="rail", color="#43A047", ekidata="11803"),
     "jr_mugi": dict(name="JR牟岐線", operator="JR四国", group="jr",
                     kind="rail", color="#FB8C00", ekidata="11804"),
+    # 瀬戸大橋線 (本四備讃線) の四国側。途中駅がなく、駅データ.jp の四国の路線に含まれないので駅を直接指定する
+    # (座標は国土数値情報の駅で置き換わる)
+    "jr_seto_ohashi": dict(name="JR瀬戸大橋線 (児島〜宇多津)", operator="JR四国", group="jr",
+                           kind="rail", color="#0277BD", ekidata=None,
+                           manual=[("児島", [133.80769, 34.462815]), ("宇多津", [133.81375, 34.30632])]),
     "jr_naruto": dict(name="JR鳴門線", operator="JR四国", group="jr",
                       kind="rail", color="#EC407A", ekidata="11805", reverse=True),
     "jr_yodo": dict(name="JR予土線", operator="JR四国", group="jr",
@@ -221,18 +226,25 @@ SERVICES = [
     dict(JR_LOCAL, id="yodo_local", name="予土線 普通", line="jr_yodo", both=True, cars=1,
          route=[("jr_yodo", "窪川", "宇和島")], bands=[("06:00", "18:00", 180)], offset=0),
     # ======== JR四国 特急 ========
-    dict(JR_LTD, id="ishizuchi", name="特急 しおかぜ・いしづち", line="jr_yosan", both=True,
-         route=[("jr_yosan", "高松", "松山")],
-         stops=["高松", "坂出", "宇多津", "丸亀", "多度津", "観音寺", "川之江", "伊予三島", "新居浜",
+    # しおかぜ (岡山方面〜松山) は瀬戸大橋を渡って宇多津で いしづち (高松〜) と併結し、宇多津〜松山を 1 本で走る。
+    # 四国側の児島から表示する。いしづち は高松〜宇多津の区間だけを走らせる
+    dict(JR_LTD, id="shiokaze", name="特急 しおかぜ・いしづち", line="jr_yosan", both=True,
+         route=[("jr_seto_ohashi", "児島", "宇多津"), ("jr_yosan", "宇多津", "松山")],
+         stops=["児島", "宇多津", "丸亀", "多度津", "観音寺", "川之江", "伊予三島", "新居浜",
                 "伊予西条", "壬生川", "今治", "伊予北条", "松山"],
-         bands=[("06:00", "20:30", 60)], color="#FFFFFF"),
+         departures=[f"{h:02d}:11" for h in range(6, 21)], departuresReturn=[f"{h:02d}:04" for h in range(6, 21)],
+         color="#FFFFFF"),
+    dict(JR_LTD, id="ishizuchi", name="特急 いしづち", line="jr_yosan", both=True, cars=3,
+         route=[("jr_yosan", "高松", "宇多津")], stops=["高松", "坂出", "宇多津"],
+         departures=[f"{h:02d}:00" for h in range(6, 21)], departuresReturn=[f"{h:02d}:20" for h in range(8, 23)],
+         color="#FFFFFF"),
     dict(JR_LTD, id="uwakai", name="特急 宇和海", line="jr_yosan_uchiko", both=True,
          route=[("jr_yosan_uchiko", "松山", "宇和島")],
          stops=["松山", "伊予市", "内子", "伊予大洲", "八幡浜", "卯之町", "宇和島"],
          bands=[("05:30", "22:00", 60)], color="#B3E5FC", offset=20),
     dict(JR_LTD, id="nanpu", name="特急 南風", line="jr_dosan", both=True,
-         route=[("jr_yosan", "宇多津", "多度津"), ("jr_dosan", "多度津", "高知")],
-         stops=["宇多津", "丸亀", "多度津", "善通寺", "琴平", "阿波池田", "大歩危", "土佐山田", "後免", "高知"],
+         route=[("jr_seto_ohashi", "児島", "宇多津"), ("jr_yosan", "宇多津", "多度津"), ("jr_dosan", "多度津", "高知")],
+         stops=["児島", "宇多津", "丸亀", "多度津", "善通寺", "琴平", "阿波池田", "大歩危", "土佐山田", "後免", "高知"],
          bands=[("06:30", "20:30", 60)], color="#FFCDD2", offset=10),
     dict(JR_LTD, id="uzushio", name="特急 うずしお", line="jr_kotoku", both=True,
          route=[("jr_kotoku", "高松", "徳島")],
@@ -343,6 +355,9 @@ def n02_coords(lines):
 def build_lines(by_line):
     lines = {}
     for key, ln in LINES.items():
+        if ln.get("manual"):
+            lines[key] = dict(ln, key=key, stations=[(n, list(c)) for n, c in ln["manual"]])
+            continue
         stations = by_line[ln["ekidata"]]
         lookup = {s[1]: s for s in stations}
         if "seq" in ln:
