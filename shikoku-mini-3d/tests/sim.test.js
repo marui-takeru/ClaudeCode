@@ -264,3 +264,19 @@ test('朝夕は増結する系統がある (マリンライナー 5 → 7 両)',
   assert.equal(W.Sim.carsFor(sv, H(7.5)), 7);
   assert.equal(W.Sim.carsFor(sv, H(7.5) + 86400), 7, '日付をまたいでも同じ');
 });
+
+test('途中駅基準の発車時刻 (departuresAt): 南風は多度津を毎時47分に発車する', () => {
+  const p = sim.patterns.find(q => q.service.id === 'nanpu' && q.path[0][0] === '児島');
+  const k = p.path.findIndex(x => x[0] === '多度津' && x[2]);
+  const t0 = p.segs.find(s => s.from === k).t0;
+  const at = p.departures.map(d => W.Sim.formatTime(d + t0).slice(0, 5));
+  for (const h of [11, 12, 13, 14, 15, 16]) assert.ok(at.includes(`${h}:47`), `${h}:47 発がある (${at.join(',')})`);
+});
+
+test('松山駅の発車案内: 宇和海は日中 毎時30分、伊予西条方面の普通は毎時58分', () => {
+  const node = W.NETWORK.services.flatMap(s => s.path).find(p => p[0] === '松山');
+  const deps = sim.departuresAt('松山', node[1], H(12), { limit: 20, horizon: 2 * 3600, radius: 150 });
+  const t = (id, hm) => deps.some(d => d.service.id === id && W.Sim.formatTime(d.time).startsWith(hm));
+  assert.ok(t('uwakai', '12:30') && t('uwakai', '13:30'));
+  assert.ok(t('matsuyama_saijo', '13:58') || t('matsuyama_kanonji', '12:58'));
+});
