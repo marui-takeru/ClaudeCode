@@ -160,12 +160,25 @@ SERVICES = [
          departures=["09:30", "11:30", "13:30", "15:30"], departuresReturn=["10:30", "12:30", "14:30", "16:30"],
          note="運行日・時刻は季節により異なります (土日祝中心)"),
     # ======== 松山 郊外電車 ========
-    dict(IYO_RAIL, id="takahama", name="高浜線", line="iyo_takahama", both=True,
-         route=[("iyo_takahama", "松山市", "高浜")], bands=SUBURBAN),
-    dict(IYO_RAIL, id="yokogawara", name="横河原線", line="iyo_yokogawara", both=True,
-         route=[("iyo_yokogawara", "松山市", "横河原")], bands=SUBURBAN, offset=5),
+    # 伊予鉄の郊外電車は、公表時刻表 (2026-10-16 改正) の運行パターン (始発・終電・時間帯ごとの間隔、
+    # 高浜線と横河原線の直通運転) に合わせた推計。個々の発車時刻は再現していない
+    dict(IYO_RAIL, id="takahama", name="高浜・横河原線", line="iyo_takahama", both=True,
+         route=[("iyo_takahama", "高浜", "松山市"), ("iyo_yokogawara", "松山市", "横河原")],
+         bandsByDay={
+             "weekday": [("05:50", "06:40", 25), ("06:47", "07:15", 23), ("07:24", "08:50", 13),
+                         ("08:58", "20:44", 15), ("21:05", "22:31", 30)],
+             "holiday": [("05:50", "07:15", 25), ("07:20", "20:44", 15), ("21:05", "22:31", 30)]},
+         bandsByDayReturn={
+             "weekday": [("06:08", "06:41", 32), ("06:58", "07:14", 15), ("07:28", "08:43", 12),
+                         ("09:05", "20:49", 15), ("21:18", "22:19", 30), ("22:58", "22:59", 1)],
+             "holiday": [("06:08", "07:14", 32), ("07:20", "20:49", 15), ("21:18", "22:19", 30),
+                         ("22:58", "22:59", 1)]}),
     dict(IYO_RAIL, id="gunchu", name="郡中線", line="iyo_gunchu", both=True, cars=2,
-         route=[("iyo_gunchu", "松山市", "郡中港")], bands=SUBURBAN, offset=10),
+         route=[("iyo_gunchu", "松山市", "郡中港")],
+         bandsByDay={"weekday": [("05:56", "06:40", 31), ("06:49", "08:40", 21), ("09:00", "20:31", 15),
+                                 ("21:00", "22:31", 30)]},
+         bandsByDayReturn={"weekday": [("05:35", "06:16", 40), ("06:37", "08:24", 21), ("08:53", "20:39", 15),
+                                       ("21:08", "22:09", 30)]}),
     # ======== JR四国 普通 ========
     dict(JR_LOCAL, id="yosan_takamatsu", name="予讃線 普通", line="jr_yosan", both=True,
          route=[("jr_yosan", "高松", "多度津")], bands=[("05:30", "23:00", 30)]),
@@ -407,7 +420,7 @@ def build_services(lines):
             loop=bool(sv.get("loop")), both=bool(sv.get("both")), offset=sv.get("offset", 0),
             path=[[RENAME.get(n, n) if n else "", c, 1 if n in stops else 0] for n, c in path],
         )
-        for k in ("bands", "departures", "departuresReturn", "note"):
+        for k in ("bands", "bandsByDay", "bandsByDayReturn", "departures", "departuresReturn", "note"):
             if k in sv:
                 o[k] = sv[k]
         out.append(o)
@@ -415,23 +428,27 @@ def build_services(lines):
 
 
 GTFS_DIR = os.path.join(HERE, "gtfs")
+EXTRA_DIR = os.path.join(HERE, "extra")  # build_ferries.py などが作る追加の路線
 
 
 def merge_gtfs(net):
     """import_gtfs.py の出力 (tools/gtfs/*.json) を取り込み、指定路線の推計ダイヤを置き換える。"""
-    if not os.path.isdir(GTFS_DIR):
+    files = [os.path.join(d, n) for d in (GTFS_DIR, EXTRA_DIR) if os.path.isdir(d)
+             for n in sorted(os.listdir(d)) if n.endswith(".json")]
+    if not files:
         return
     holidays, credits = set(), []
-    for name in sorted(os.listdir(GTFS_DIR)):
-        if not name.endswith(".json"):
-            continue
-        g = json.load(open(os.path.join(GTFS_DIR, name), encoding="utf-8"))
+    for path in files:
+        name = os.path.basename(path)
+        g = json.load(open(path, encoding="utf-8"))
         replaced = set(g.get("replaces", []))
         net["lines"] = [l for l in net["lines"] if l["id"] not in replaced] + g["lines"]
         net["services"] = [s for s in net["services"] if s["line"] not in replaced] + g["services"]
         known = {x["id"] for x in net["groups"]}
         net["groups"] += [x for x in g["groups"] if x["id"] not in known]
         holidays.update(g.get("holidays", []))
+        if g.get("airports"):
+            net.setdefault("airports", []).extend(g["airports"])
         if g.get("credit"):
             credits.append(g["credit"])
         print(f"merged {name}: {len(g['services'])} patterns, replaced {sorted(replaced)}", file=sys.stderr)

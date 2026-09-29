@@ -69,6 +69,15 @@ class GtfsTests(unittest.TestCase):
         self.assertEqual(import_gtfs.active_services(z, "20261004"), {"HD"})   # 日曜
         self.assertEqual(import_gtfs.active_services(z, "20261012"), {"HD"})   # 祝日 (スポーツの日)
 
+    def test_no_holidays_when_every_day_is_the_same(self):
+        # 毎日同じダイヤのフィードから、平日を祝日と誤判定しない
+        z = feed({
+            "calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n"
+                            "ALL,1,1,1,1,1,1,1,20260101,20261231\n",
+            "calendar_dates.txt": "service_id,date,exception_type\n",
+        })
+        self.assertEqual(import_gtfs.holiday_dates(z, "20261004", "20261005"), [])
+
     def test_seconds_over_24h(self):
         self.assertEqual(import_gtfs.seconds("25:10:05"), 25 * 3600 + 10 * 60 + 5)
 

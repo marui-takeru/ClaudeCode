@@ -35,12 +35,16 @@ test('台形速度の位置関数は 0→1 で単調増加', () => {
 test('主な系統の所要時間が実際の値に近い', () => {
   const minutes = id => pattern(id).durationOf(0) / 60;
   assert.ok(minutes('iyo3') > 15 && minutes('iyo3') < 25, `3系統 ${minutes('iyo3')}`);
-  assert.ok(minutes('takahama') > 15 && minutes('takahama') < 25, `高浜線 ${minutes('takahama')}`);
+  // 高浜〜横河原の直通 (実際はおよそ 50 分)
+  assert.ok(minutes('takahama') > 45 && minutes('takahama') < 60, `高浜・横河原線 ${minutes('takahama')}`);
+  assert.ok(minutes('gunchu') > 20 && minutes('gunchu') < 30, `郡中線 ${minutes('gunchu')}`);
   assert.ok(minutes('ishizuchi') > 120 && minutes('ishizuchi') < 170, `いしづち ${minutes('ishizuchi')}`);
 });
 
 test('深夜は運行せず、昼は多くの列車が走る', () => {
-  assert.equal(sim.trainsAt(H(3)).length, 0);
+  // 深夜も走るのは夜行・深夜便の船だけ
+  assert.equal(sim.trainsAt(H(3)).filter(t => t.service.kind !== 'ship').length, 0);
+  assert.ok(sim.trainsAt(H(3)).some(t => t.service.id === 'ferry_orange'));
   assert.ok(sim.trainsAt(H(12)).length > 80);
 });
 
@@ -56,7 +60,7 @@ test('日付をまたぐ列車も数える', () => {
   const after = s2.trainsAt(10 * 60);
   assert.equal(after.length, 1);
   assert.equal(after[0].dep, H(23) + 50 * 60);
-  assert.equal(s2.trainsAt(H(1)).length, 0);
+  assert.equal(s2.trainsAt(H(3)).length, 0);
 });
 
 test('発車待ちの列車は始発駅に停車している', () => {
@@ -70,7 +74,7 @@ test('発車待ちの列車は始発駅に停車している', () => {
 });
 
 test('列車の位置は経路上にあり、時間とともに進む', () => {
-  const p = pattern('yokogawara');
+  const p = pattern('gunchu');
   let prev = -1;
   for (let e = 0; e <= p.durationOf(0); e += 15) {
     const st = p.stateAt(e);
@@ -90,7 +94,7 @@ test('発車案内は近い順で、その駅を発車する列車だけ', () =>
 
 test('到達圏: 出発駅は 0 分、遠い駅ほど時間がかかり、上限を超えない', () => {
   const line = W.NETWORK.lines.find(l => l.id === 'iyo_takahama');
-  const [name, c] = line.stations[0];
+  const [name, c] = line.stations.find(st => st[0] === '松山市');
   const r = sim.reachFrom(name, c, H(8), { maxMinutes: 60 });
   const byName = n => r.find(x => x.name === n);
   assert.equal(byName(name).minutes, 0);
@@ -153,4 +157,14 @@ test('平日 / 土休日ダイヤ: 日付の判定と便の切り替え', () => 
   assert.equal(s2.trainsAt(H(8) + 900).length, 2);
   s2.setDayType('holiday');
   assert.equal(s2.trainsAt(H(8) + 900).length, 1);
+});
+
+test('平日と土休日で推計ダイヤの本数が変わる (伊予鉄 郊外電車の朝)', () => {
+  const W2 = load();
+  const s2 = new W2.Sim.Simulator(W2.NETWORK);
+  const count = () => s2.patterns.filter(p => p.service.id === 'takahama')
+    .reduce((n, p) => n + p.departures.filter(d => d >= H(7) + 1800 && d < H(8) + 1800).length, 0);
+  const weekday = count();
+  s2.setDayType('holiday');
+  assert.ok(weekday > count(), `平日 ${weekday} 本`);
 });

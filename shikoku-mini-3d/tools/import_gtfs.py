@@ -35,6 +35,8 @@ VEHICLE = {
     "rail": dict(kind="rail", cars=2, carLength=20, width=2.9, height=4.0, speed=75, dwell=30, accel=30),
     # 阿佐海岸鉄道の DMV (線路と道路の両方を走るマイクロバス型の車両)
     "dmv": dict(kind="rail", cars=1, carLength=9, width=2.3, height=3.2, speed=40, dwell=20, accel=10),
+    # 小型の旅客船・渡船
+    "ship": dict(kind="ship", cars=1, carLength=20, width=5, height=5, speed=20, dwell=60, accel=30),
 }
 
 
@@ -118,10 +120,13 @@ def pick_dates(z, today):
     return weekday, holiday
 
 
-def holiday_dates(z, holiday_date):
-    """平日 (月〜金) なのに土休日と同じ運行になる日 = 祝日・年末年始など。"""
+def holiday_dates(z, holiday_date, weekday_date=None):
+    """平日 (月〜金) なのに土休日と同じ運行になる日 = 祝日・年末年始など。
+    平日と土休日で運行が同じフィード (毎日同じダイヤ) からは、祝日は判断できないので空にする。"""
     start, end = feed_range(z)
     ref = active_services(z, holiday_date)
+    if weekday_date and active_services(z, weekday_date) == ref:
+        return []
     out = []
     day = datetime.datetime.strptime(start, "%Y%m%d")
     while day.strftime("%Y%m%d") <= end:
@@ -240,7 +245,7 @@ def main():
         feed=os.path.basename(args.feed),
         credit=args.credit,
         days=days,
-        holidays=holiday_dates(z, days["holiday"]) if "holiday" in days else [],
+        holidays=holiday_dates(z, days["holiday"], days.get("weekday")) if "holiday" in days else [],
         groups=[dict(id=args.group, name=args.group_name)],
         replaces=[x for x in args.replaces.split(",") if x],
         lines=list(lines.values()),
