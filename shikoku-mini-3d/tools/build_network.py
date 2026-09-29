@@ -84,6 +84,10 @@ LINES = {
     "jr_seto_ohashi": dict(name="JR瀬戸大橋線 (児島〜宇多津)", operator="JR四国", group="jr",
                            kind="rail", color="#0277BD", ekidata=None,
                            manual=[("児島", [133.80769, 34.462815]), ("宇多津", [133.81375, 34.30632])]),
+    # マリンライナーは瀬戸大橋から坂出へ直接向かう (宇多津を通らない三角線の一辺)
+    "jr_seto_ohashi_sakaide": dict(name="JR瀬戸大橋線 (児島〜坂出)", operator="JR四国", group="jr",
+                                   kind="rail", color="#0277BD", ekidata=None,
+                                   manual=[("児島", [133.80769, 34.462815]), ("坂出", [133.856785, 34.31319])]),
     "jr_naruto": dict(name="JR鳴門線", operator="JR四国", group="jr",
                       kind="rail", color="#EC407A", ekidata="11805", reverse=True),
     "jr_yodo": dict(name="JR予土線", operator="JR四国", group="jr",
@@ -134,6 +138,7 @@ IYO_RAIL = dict(kind="rail", cars=3, carLength=18, width=2.8, height=3.9,
                 speed=50, dwell=30, accel=20)
 JR_LOCAL = dict(kind="rail", cars=2, carLength=20, width=2.9, height=4.0,
                 speed=75, dwell=30, accel=30)
+ISHIZUCHI_COLOR = "#D6E8FA"  # 併結したときに見分けられるよう、いしづち の車両はわずかに青みがかった色にする
 JR_LTD = dict(kind="rail", cars=5, carLength=21, width=2.9, height=4.0,
               speed=95, dwell=60, accel=40, group="jr_ltd", color="#FFFFFF")
 
@@ -226,18 +231,26 @@ SERVICES = [
     dict(JR_LOCAL, id="yodo_local", name="予土線 普通", line="jr_yodo", both=True, cars=1,
          route=[("jr_yodo", "窪川", "宇和島")], bands=[("06:00", "18:00", 180)], offset=0),
     # ======== JR四国 特急 ========
-    # しおかぜ (岡山方面〜松山) は瀬戸大橋を渡って宇多津で いしづち (高松〜) と併結し、宇多津〜松山を 1 本で走る。
-    # 四国側の児島から表示する。いしづち は高松〜宇多津の区間だけを走らせる
-    dict(JR_LTD, id="shiokaze", name="特急 しおかぜ・いしづち", line="jr_yosan", both=True,
+    # しおかぜ (岡山方面〜松山) と いしづち (高松〜松山) は、宇多津〜松山を 1 本の列車 (5 + 3 両) で走る。
+    # 松山行き: しおかぜ が先に宇多津に着き、2 分半後に いしづち が後ろに着いて連結 (併結) してから発車。
+    # 岡山・高松行き: 松山からの 8 両が宇多津に着いた時点で切り離し、前 5 両が岡山へ、後ろ 3 両が 2 分後に高松へ。
+    # いしづち の発車時刻は、しおかぜ の宇多津の発着時刻から計算する (coupleWith)。
+    dict(JR_LTD, id="shiokaze", name="特急 しおかぜ", line="jr_yosan", both=True,
          route=[("jr_seto_ohashi", "児島", "宇多津"), ("jr_yosan", "宇多津", "松山")],
          stops=["児島", "宇多津", "丸亀", "多度津", "観音寺", "川之江", "伊予三島", "新居浜",
                 "伊予西条", "壬生川", "今治", "伊予北条", "松山"],
          departures=[f"{h:02d}:11" for h in range(6, 21)], departuresReturn=[f"{h:02d}:04" for h in range(6, 21)],
-         color="#FFFFFF"),
+         stopDwell={"宇多津": 300}, color="#FFFFFF",
+         couple=dict(station="宇多津", cars=3, color=ISHIZUCHI_COLOR, partner="ishizuchi", partnerName="いしづち")),
     dict(JR_LTD, id="ishizuchi", name="特急 いしづち", line="jr_yosan", both=True, cars=3,
          route=[("jr_yosan", "高松", "宇多津")], stops=["高松", "坂出", "宇多津"],
-         departures=[f"{h:02d}:00" for h in range(6, 21)], departuresReturn=[f"{h:02d}:20" for h in range(8, 23)],
-         color="#FFFFFF"),
+         coupleWith=dict(partner="shiokaze", partnerName="しおかぜ", station="宇多津", lead=150, split=420),
+         color=ISHIZUCHI_COLOR),
+    # 快速 マリンライナー (岡山〜高松)。四国側の児島から表示し、瀬戸大橋から坂出へ直接入る
+    dict(JR_LOCAL, id="marine", name="快速 マリンライナー", line="jr_seto_ohashi_sakaide", both=True, cars=5,
+         route=[("jr_seto_ohashi_sakaide", "児島", "坂出"), ("jr_yosan", "坂出", "高松")],
+         stops=["児島", "坂出", "高松"], speed=90, dwell=45, color="#29B6F6",
+         bands=[("06:02", "23:32", 30)], offset=0),
     dict(JR_LTD, id="uwakai", name="特急 宇和海", line="jr_yosan_uchiko", both=True,
          route=[("jr_yosan_uchiko", "松山", "宇和島")],
          stops=["松山", "伊予市", "内子", "伊予大洲", "八幡浜", "卯之町", "宇和島"],
@@ -435,7 +448,8 @@ def build_services(lines):
             loop=bool(sv.get("loop")), both=bool(sv.get("both")), offset=sv.get("offset", 0),
             path=[[RENAME.get(n, n) if n else "", c, 1 if n in stops else 0] for n, c in path],
         )
-        for k in ("bands", "bandsByDay", "bandsByDayReturn", "departures", "departuresReturn", "note"):
+        for k in ("bands", "bandsByDay", "bandsByDayReturn", "departures", "departuresReturn", "note",
+                  "stopDwell", "couple", "coupleWith"):
             if k in sv:
                 o[k] = sv[k]
         out.append(o)

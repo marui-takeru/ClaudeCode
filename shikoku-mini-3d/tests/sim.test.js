@@ -185,3 +185,49 @@ test('瀬戸大橋線: 列車は線路の点列の上を走る (児島〜宇多�
     - W.Sim.haversine(line.shape[i - 1], c) < 1);
   assert.ok(seg > 0, `線路から外れていない (最寄りの点まで ${near.toFixed(0)} m)`);
 });
+
+test('マリンライナー: 児島→坂出→高松 (宇多津を通らない)、約 30 分間隔', () => {
+  const p = sim.patterns.find(q => q.service.id === 'marine' && q.path[0][0] === '児島');
+  assert.ok(p, 'マリンライナーがある');
+  const names = p.path.map(q => q[0]);
+  assert.ok(!names.includes('宇多津'), '宇多津は通らない');
+  const kojima = names.indexOf('児島'), sakaide = names.indexOf('坂出');
+  const km = (p.cum[sakaide] - p.cum[kojima]) / 1000;
+  assert.ok(km > 19.5 && km < 21, `児島〜坂出 ${km.toFixed(2)} km`);
+  assert.equal(names[names.length - 1], '高松');
+  const day = p.departures.filter(d => d >= H(10) && d < H(16));
+  assert.equal(day.length, 12);
+});
+
+test('宇多津で しおかぜ と いしづち が併結・切り離しする', () => {
+  const stopAt = (p, name) => {
+    const k = p.path.findIndex(x => x[0] === name && x[2]);
+    return { arr: p.segs.find(s => s.to === k).t1, dep: p.segs.find(s => s.from === k).t0 };
+  };
+  // 下り (岡山方面→松山): いしづちは しおかぜ の宇多津発車までに着き、発車時刻に消える (8 両で松山へ)
+  const sDown = sim.patterns.find(q => q.service.id === 'shiokaze' && q.path[0][0] === '児島');
+  const iDown = sim.patterns.find(q => q.service.id === 'ishizuchi' && q.dirLabel === sDown.dirLabel);
+  assert.equal(iDown.couple.role, 'join');
+  assert.equal(sDown.couple.role, 'lead-join');
+  const sd = stopAt(sDown, '宇多津');
+  assert.equal(iDown.departures.length, sDown.departures.length);
+  sDown.departures.forEach((d0, i) => {
+    const iArr = iDown.departures[i] + iDown.duration;
+    assert.ok(iArr > d0 + sd.arr && iArr < d0 + sd.dep, 'しおかぜ の停車中に いしづち が着く');
+    assert.equal(iArr + iDown.linger, d0 + sd.dep, 'しおかぜ の発車と同時に連結して消える');
+  });
+  // 上り (松山→岡山方面): 8 両で着き、しおかぜ が先に発車、その後 いしづち が高松へ
+  const sUp = sim.patterns.find(q => q.service.id === 'shiokaze' && q.path[0][0] === '松山');
+  const iUp = sim.patterns.find(q => q.service.id === 'ishizuchi' && q.dirLabel === sUp.dirLabel);
+  assert.equal(iUp.couple.role, 'split');
+  assert.equal(iUp.path[0][0], '宇多津');
+  const su = stopAt(sUp, '宇多津');
+  sUp.departures.forEach((d0, i) => {
+    const iDep = iUp.departures[i];
+    assert.ok(iDep > d0 + su.dep, '岡山行きが出たあとに高松行きが出る');
+    assert.equal(iDep - iUp.layover, d0 + su.arr, '到着と同時に切り離し、ホームで待つ');
+  });
+  // 併結中は いしづち 単独の列車を表示しない
+  const t = sDown.departures[5] + sd.dep + 60;
+  assert.ok(!sim.trainsAt(t, () => true).some(x => x.pattern === iDown));
+});
