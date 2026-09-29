@@ -45,11 +45,18 @@ test('深夜は運行せず、昼は多くの列車が走る', () => {
 });
 
 test('日付をまたぐ列車も数える', () => {
-  const late = sim.trainsAt(H(23) + 50 * 60);
-  const after = sim.trainsAt(10 * 60);
-  assert.ok(late.length > 0);
-  // 0:10 に走っている列車はすべて前日の発車
-  for (const tr of after) assert.ok(tr.dep > H(20));
+  // 23:50 発・所要約 30 分の便だけを持つ系統で、0:10 にも走っていることを確かめる
+  const base = W.NETWORK.services.find(s => s.id === 'takahama');
+  const stops = base.path.filter(p => p[2]).length;
+  const t = Array.from({ length: stops }, (_, k) => [k * 200, k * 200]);
+  const net = { ...W.NETWORK, services: [{ ...base, id: 'late', both: false, bands: undefined, trips: [{ dep: H(23) + 50 * 60, t }] }] };
+  const W2 = load(net);
+  const s2 = new W2.Sim.Simulator(W2.NETWORK);
+  assert.equal(s2.trainsAt(H(23) + 55 * 60).length, 1);
+  const after = s2.trainsAt(10 * 60);
+  assert.equal(after.length, 1);
+  assert.equal(after[0].dep, H(23) + 50 * 60);
+  assert.equal(s2.trainsAt(H(1)).length, 0);
 });
 
 test('発車待ちの列車は始発駅に停車している', () => {
@@ -124,4 +131,26 @@ test('便ごとの時刻 (trips) を持つ系統は、その時刻どおりに�
 
 test('parseTime は HH:MM を秒に変換する', () => {
   assert.equal(parseTime('07:45'), 7 * 3600 + 45 * 60);
+});
+
+test('平日 / 土休日ダイヤ: 日付の判定と便の切り替え', () => {
+  const base = W.NETWORK.services.find(s => s.id === 'takahama');
+  const stops = base.path.filter(p => p[2]).length;
+  const t = Array.from({ length: stops }, (_, k) => [k * 120, k * 120]);
+  const net = {
+    ...W.NETWORK,
+    calendar: { holidays: ['20261012'] },
+    services: [{ ...base, id: 'd', both: false, bands: undefined, trips: [
+      { dep: H(8), t, days: ['weekday'] },
+      { dep: H(8) + 600, t, days: ['weekday', 'holiday'] },
+    ] }],
+  };
+  const W2 = load(net);
+  const s2 = new W2.Sim.Simulator(W2.NETWORK);
+  assert.equal(s2.dayTypeOf('20261005'), 'weekday'); // 月曜
+  assert.equal(s2.dayTypeOf('20261010'), 'holiday'); // 土曜
+  assert.equal(s2.dayTypeOf('20261012'), 'holiday'); // 祝日 (スポーツの日)
+  assert.equal(s2.trainsAt(H(8) + 900).length, 2);
+  s2.setDayType('holiday');
+  assert.equal(s2.trainsAt(H(8) + 900).length, 1);
 });

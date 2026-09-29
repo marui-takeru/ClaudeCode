@@ -378,21 +378,31 @@ def build_services(lines):
     return out
 
 
-GTFS_FILE = os.path.join(HERE, "gtfs_services.json")
+GTFS_DIR = os.path.join(HERE, "gtfs")
 
 
 def merge_gtfs(net):
-    """import_gtfs.py の出力があれば、指定路線の推計ダイヤを時刻表データで置き換える。"""
-    if not os.path.exists(GTFS_FILE):
+    """import_gtfs.py の出力 (tools/gtfs/*.json) を取り込み、指定路線の推計ダイヤを置き換える。"""
+    if not os.path.isdir(GTFS_DIR):
         return
-    g = json.load(open(GTFS_FILE, encoding="utf-8"))
-    replaced = set(g.get("replaces", []))
-    net["lines"] = [l for l in net["lines"] if l["id"] not in replaced] + g["lines"]
-    net["services"] = [s for s in net["services"] if s["line"] not in replaced] + g["services"]
+    holidays, credits = set(), []
+    for name in sorted(os.listdir(GTFS_DIR)):
+        if not name.endswith(".json"):
+            continue
+        g = json.load(open(os.path.join(GTFS_DIR, name), encoding="utf-8"))
+        replaced = set(g.get("replaces", []))
+        net["lines"] = [l for l in net["lines"] if l["id"] not in replaced] + g["lines"]
+        net["services"] = [s for s in net["services"] if s["line"] not in replaced] + g["services"]
+        known = {x["id"] for x in net["groups"]}
+        net["groups"] += [x for x in g["groups"] if x["id"] not in known]
+        holidays.update(g.get("holidays", []))
+        if g.get("credit"):
+            credits.append(g["credit"])
+        print(f"merged {name}: {len(g['services'])} patterns, replaced {sorted(replaced)}", file=sys.stderr)
     used = {s["group"] for s in net["services"]} | {l["group"] for l in net["lines"]}
-    net["groups"] = [x for x in net["groups"] + g["groups"] if x["id"] in used]
-    net["source"] += " / 時刻表: GTFS"
-    print(f"merged GTFS: {len(g['services'])} patterns, replaced {sorted(replaced)}", file=sys.stderr)
+    net["groups"] = [x for x in net["groups"] if x["id"] in used]
+    net["calendar"] = {"holidays": sorted(holidays)}
+    net["credits"] = credits
 
 
 def main():
@@ -415,7 +425,7 @@ def main():
         f.write("window.NETWORK = ")
         json.dump(net, f, ensure_ascii=False, separators=(",", ":"))
         f.write(";\n")
-    print(f"wrote {OUT}: {len(net['lines'])} lines, {len(services)} services", file=sys.stderr)
+    print(f"wrote {OUT}: {len(net['lines'])} lines, {len(net['services'])} services", file=sys.stderr)
 
 
 if __name__ == "__main__":

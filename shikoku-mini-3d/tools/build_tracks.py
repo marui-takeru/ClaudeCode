@@ -18,6 +18,7 @@ import json
 import math
 import os
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -27,16 +28,27 @@ import build_network  # noqa: E402  (路線定義と駅座標の読み込みを�
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, "osm_rail.json")
 OUT = os.path.join(HERE, "track_shapes.json")
-OVERPASS = "https://overpass-api.de/api/interpreter"
+# Overpass API のサーバー (カンマ区切りで複数指定すると、失敗時に順に試す)
+OVERPASS = os.environ.get(
+    "OVERPASS_URL",
+    "https://overpass-api.de/api/interpreter,https://overpass.private.coffee/api/interpreter,"
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter").split(",")
 BBOX = (32.6, 132.0, 34.6, 134.9)  # 四国 (南, 西, 北, 東)
+TILE = 0.1  # 一度に問い合わせる範囲 [度]。大きいとサーバーが時間切れになる
 
-QUERY = f"""
-[out:json][timeout:300];
-way["railway"~"^(rail|light_rail|tram|narrow_gauge)$"]({BBOX[0]},{BBOX[1]},{BBOX[2]},{BBOX[3]});
+QUERY = """
+[out:json][timeout:90];
+(
+  way["railway"="rail"]({s},{w},{n},{e});
+  way["railway"="light_rail"]({s},{w},{n},{e});
+  way["railway"="tram"]({s},{w},{n},{e});
+  way["railway"="narrow_gauge"]({s},{w},{n},{e});
+);
 out body;
 >;
 out skel qt;
 """
+TILE_CACHE = os.path.join(HERE, "osm_tiles")  # 取得済みの範囲 (再実行時は続きから)
 
 SNAP_RADIUS = 350      # 駅から線路へ吸着させる最大距離 [m]
 SNAP_CANDIDATES = 3    # 各駅で試す線路上の候補点の数
@@ -44,16 +56,60 @@ MAX_DETOUR = 3.0       # 直線距離に対する経路長の上限 (倍)
 SIMPLIFY = {"tram": 2.0, "rail": 4.0}  # 形状の間引き許容誤差 [m]
 
 
+def overpass(query):
+    """いずれかのサーバーで query を実行する (各サーバー 2 回まで再試行)。"""
+    data = urllib.parse.urlencode({"data": query}).encode()
+    last = None
+    for attempt in range(2):
+        for url in OVERPASS:
+            try:
+                req = urllib.request.Request(url, data=data, headers={"User-Agent": "mini-shikoku-3d/1.0"})
+                with urllib.request.urlopen(req, timeout=120) as res:
+                    return json.load(res)
+            except Exception as e:  # noqa: BLE001  (サーバー側の失敗は次を試す)
+                last = e
+                print(f"  {url}: {e}", file=sys.stderr)
+        time.sleep(10 * (attempt + 1))
+    raise RuntimeError(f"Overpass API に接続できません: {last}")
+
+
+def needed_tiles():
+    """路線 (駅と駅を結ぶ線) が通る範囲だけを取得対象にする。海の上などは問い合わせない。"""
+    lines = build_network.build_lines(build_network.load_stations(None))
+    tiles = set()
+    for line in lines.values():
+        pts = [c for _, c in line["stations"]]
+        for a, b in zip(pts, pts[1:]):
+            steps = max(1, int(meters(a, b) / 1000))
+            for k in range(steps + 1):
+                lon = a[0] + (b[0] - a[0]) * k / steps
+                lat = a[1] + (b[1] - a[1]) * k / steps
+                tiles.add((math.floor(lat / TILE), math.floor(lon / TILE)))
+    # 線路は駅間の直線から少し外れるので、周囲 1 枠も含める
+    return sorted({(i + di, j + dj) for i, j in tiles for di in (-1, 0, 1) for dj in (-1, 0, 1)})
+
+
 def fetch_osm(path):
     if path and os.path.exists(path):
         return json.load(open(path, encoding="utf-8"))
     if os.path.exists(CACHE):
         return json.load(open(CACHE, encoding="utf-8"))
-    print("querying Overpass API ...", file=sys.stderr)
-    data = urllib.parse.urlencode({"data": QUERY}).encode()
-    req = urllib.request.Request(OVERPASS, data=data, headers={"User-Agent": "mini-shikoku-3d/1.0"})
-    with urllib.request.urlopen(req, timeout=600) as res:
-        osm = json.load(res)
+    os.makedirs(TILE_CACHE, exist_ok=True)
+    tiles = needed_tiles()
+    elements = {}
+    for n, (i, j) in enumerate(tiles):
+        cache = os.path.join(TILE_CACHE, f"{i}_{j}.json")
+        if os.path.exists(cache):
+            res = json.load(open(cache, encoding="utf-8"))
+        else:
+            s, w = i * TILE, j * TILE
+            print(f"[{n + 1}/{len(tiles)}] querying {s:.2f},{w:.2f}", file=sys.stderr)
+            res = overpass(QUERY.format(s=s, w=w, n=s + TILE, e=w + TILE))
+            with open(cache, "w", encoding="utf-8") as f:
+                json.dump(res, f)
+        for el in res["elements"]:
+            elements[(el["type"], el["id"])] = el
+    osm = {"elements": list(elements.values())}
     with open(CACHE, "w", encoding="utf-8") as f:
         json.dump(osm, f)
     return osm
