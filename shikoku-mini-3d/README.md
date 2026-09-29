@@ -74,6 +74,7 @@ python3 tools/build_network.py   # 駅座標データを取得して data/networ
 
 ```sh
 # 国土数値情報 鉄道データ (https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N02-2024.html) を使う (推奨)
+python3 tools/extract_n02_stations.py N02-24_Station.geojson   # 駅の座標も国土数値情報にする
 python3 tools/build_tracks.py --n02 N02-24_RailroadSection.geojson
 # または OpenStreetMap (Overpass API。混雑時は OVERPASS_URL でミラーを指定)
 python3 tools/build_tracks.py
@@ -123,9 +124,9 @@ python3 -m unittest discover tests       # 線路形状の経路探索・GTFS �
 
 ## データ出典
 
-- 線路: 「国土数値情報（鉄道データ）」（国土交通省）を加工して作成
+- 駅の位置・線路: 「国土数値情報（鉄道データ）」（国土交通省）を加工して作成（CC BY 4.0）
 - 時刻表: ことでん（高松琴平電気鉄道）GTFS、とさでん交通 GTFS、阿佐海岸鉄道 GTFS（いずれも CC BY 4.0）
-- 駅座標: [駅データ.jp](https://ekidata.jp/) (取得元: [piuccio/open-data-jp-railway-stations](https://github.com/piuccio/open-data-jp-railway-stations))。
+- 駅名・駅の並び: [駅データ.jp](https://ekidata.jp/) (取得元: [piuccio/open-data-jp-railway-stations](https://github.com/piuccio/open-data-jp-railway-stations))。
   公開・再配布する場合は駅データ.jp の利用規約を確認してください。
 - 地図: © OpenStreetMap contributors, OpenFreeMap, OpenMapTiles / 国土地理院
 - 標高: AWS Terrain Tiles (Mapzen)

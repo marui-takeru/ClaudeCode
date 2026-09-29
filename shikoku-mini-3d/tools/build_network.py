@@ -294,6 +294,39 @@ def order_by_code(stations):
     return fixed
 
 
+N02_STATIONS = os.path.join(HERE, "n02_stations.json")
+N02_OPERATOR = {"JR四国": "四国旅客鉄道"}
+# 駅データ.jp と国土数値情報で名前の違う駅
+N02_ALIAS = {"松山市駅前": "松山市駅", "松山駅前": "JR松山駅前", "綾川（イオンモール綾川）": "綾川", "西ケ方": "西ヶ方"}
+
+
+def n02_coords(lines):
+    """駅の座標を国土数値情報 (N02) の駅の位置に置き換える。見つからない駅はそのまま。"""
+    if not os.path.exists(N02_STATIONS):
+        return 0, []
+    table = {}
+    for op, _line, name, lon, lat in json.load(open(N02_STATIONS, encoding="utf-8")):
+        table.setdefault((op, name), []).append([lon, lat])
+        table.setdefault((None, name), []).append([lon, lat])
+    replaced, missing = 0, []
+    for line in lines.values():
+        op = N02_OPERATOR.get(line["operator"], line["operator"])
+        new = []
+        for name, c in line["stations"]:
+            n02name = N02_ALIAS.get(name, name)
+            # 同じ事業者の同名駅を優先し、無ければ他社の同名駅 (例: 他社線に乗り入れる区間の駅)
+            cands = table.get((op, n02name)) or table.get((None, n02name)) or []
+            best = min(cands, key=lambda x: dist_km(x, c), default=None)
+            if best is not None and dist_km(best, c) < 1.0:
+                new.append((name, best))
+                replaced += 1
+            else:
+                new.append((name, c))
+                missing.append(f"{line['name']} {name}")
+        line["stations"] = new
+    return replaced, missing
+
+
 def build_lines(by_line):
     lines = {}
     for key, ln in LINES.items():
@@ -306,6 +339,9 @@ def build_lines(by_line):
             if ln.get("reverse"):
                 seq.reverse()
         lines[key] = dict(ln, key=key, stations=[(s[1], [s[2], s[3]]) for s in seq])
+    replaced, missing = n02_coords(lines)
+    if replaced:
+        print(f"station coords from N02: {replaced} replaced, {len(missing)} kept {missing[:5]}", file=sys.stderr)
     shapes = load_shapes()
     for line in lines.values():
         line["points"] = expand_line(line, shapes)
@@ -410,7 +446,8 @@ def main():
     lines = build_lines(by_line)
     services = build_services(lines)
     net = dict(
-        source="駅座標: 駅データ.jp (via piuccio/open-data-jp-railway-stations)",
+        source=("駅座標: 国土数値情報（鉄道データ）、駅の並び: 駅データ.jp" if os.path.exists(N02_STATIONS)
+                else "駅座標: 駅データ.jp (via piuccio/open-data-jp-railway-stations)"),
         groups=GROUPS,
         lines=[dict(id=k, name=v["name"], operator=v["operator"], group=v["group"], kind=v["kind"],
                     color=v["color"],
