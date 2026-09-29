@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mini Shikoku 3D — 松山の電車を3Dで</title>
+  <meta name="description" content="松山を中心に、四国の鉄道の列車の動きを3D地図上で可視化するデモ">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="map"></div>
+
+  <aside id="panel">
+    <header class="panel-head">
+      <div>
+        <h1>Mini Shikoku 3D</h1>
+        <p class="sub">松山・四国の鉄道をリアルタイム3Dで</p>
+      </div>
+      <button id="panel-toggle" class="icon" aria-label="パネルを開閉">☰</button>
+    </header>
+
+    <div class="panel-body">
+      <section class="clock-box">
+        <div class="clock-row">
+          <span id="clock" class="clock">--:--:--</span>
+          <span class="count"><b id="train-count">0</b> 本運行中</span>
+        </div>
+        <div class="row">
+          <button id="daytype" class="chip" title="平日ダイヤと土休日ダイヤを切り替え"></button>
+        </div>
+        <div class="row" id="speeds"></div>
+        <div class="row">
+          <button id="pause" aria-label="一時停止">❚❚</button>
+          <button id="now">現在時刻</button>
+          <input id="jump" type="time" aria-label="時刻を指定">
+        </div>
+      </section>
+
+      <section>
+        <h2>駅をさがす</h2>
+        <input id="search" type="search" list="station-list" placeholder="駅名を入力（例: 道後温泉）" autocomplete="off">
+        <datalist id="station-list"></datalist>
+      </section>
+
+      <section>
+        <h2>エリア</h2>
+        <div class="row wrap">
+          <button data-view="matsuyama">松山 中心部</button>
+          <button data-view="dogo">道後温泉</button>
+          <button data-view="matsuyama_wide">松山 郊外</button>
+          <button data-view="takamatsu">高松</button>
+          <button data-view="tokushima">徳島</button>
+          <button data-view="kochi">高知</button>
+          <button data-view="seto_ohashi">瀬戸大橋</button>
+          <button data-view="shikoku">四国全体</button>
+          <button data-view="setouchi">瀬戸内の航路</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>路線</h2>
+        <div id="legend"></div>
+      </section>
+
+      <section>
+        <h2>1日の運行本数（表示中の路線）</h2>
+        <div id="daychart" class="viz-root">
+          <svg id="daychart-svg" viewBox="0 0 272 84" role="img" aria-label="時刻ごとの運行中の列車本数"></svg>
+          <div id="daychart-tip" hidden></div>
+        </div>
+        <details class="daychart-table">
+          <summary>表で見る</summary>
+          <table id="daychart-table"><thead><tr><th>時刻</th><th>本数</th></tr></thead><tbody></tbody></table>
+        </details>
+      </section>
+
+      <section>
+        <h2>表示</h2>
+        <div class="row wrap">
+          <button id="theme"></button>
+          <button id="buildings" aria-pressed="true">3D建物</button>
+          <button id="terrain" aria-pressed="false">地形</button>
+        </div>
+        <div class="row wrap">
+          <button id="cinema">撮影モード</button>
+          <button id="share">この景色を共有</button>
+        </div>
+      </section>
+
+      <p class="note">
+        キー操作: Space 一時停止 ／ 1〜4 倍速 ／ N 現在時刻 ／ C 撮影モード ／ F 追跡 ／ Esc 閉じる
+      </p>
+      <p class="note">
+        ことでん・とさでん交通・阿佐海岸鉄道と一部の旅客船は公開されている<strong>時刻表データ（GTFS）</strong>で、それ以外の鉄道・主なフェリー・航空便は<strong>推計ダイヤ</strong>で動かしています（JR四国は本数を「全国鉄道運行本数データ」に、主な駅の発車時刻を公式時刻表の毎時◯分のパターンに合わせています）。空港の乗降客数は国の統計（実データ）です。遅延は反映していません。
+      </p>
+    </div>
+  </aside>
+
+  <div id="reach-legend" hidden>
+    <div id="reach-title"></div>
+    <ol id="reach-bands"></ol>
+    <div class="reach-foot"><span id="reach-total"></span></div>
+    <div class="row">
+      <select id="reach-max" aria-label="上限時間">
+        <option value="30">30 分</option>
+        <option value="60" selected>60 分</option>
+        <option value="90">90 分</option>
+      </select>
+      <button id="reach-recalc" title="いまのシミュレーション時刻で計算し直す">今の時刻で再計算</button>
+      <button id="reach-clear">消す</button>
+    </div>
+    <p class="note">乗り換えは 1 分以上、500m 以内の駅は徒歩連絡として計算。推計ダイヤにもとづく参考値です。</p>
+  </div>
+
+  <div id="cinema-bar">
+    <span id="cinema-title">Mini Shikoku 3D <span id="cinema-clock"></span></span>
+    <button id="cinema-exit">撮影モードを終了（Esc）</button>
+  </div>
+
+  <div id="info" hidden>
+    <div class="info-head">
+      <i id="info-swatch"></i>
+      <div>
+        <div id="info-name"></div>
+        <div id="info-dest"></div>
+      </div>
+      <button id="info-close" class="icon" aria-label="閉じる">×</button>
+    </div>
+    <div id="info-status"></div>
+    <div id="info-detail"></div>
+    <ol id="info-stops" aria-label="この先の停車駅"></ol>
+    <button id="info-follow" aria-pressed="false">この列車を追跡</button>
+  </div>
+
+  <div id="station" class="card" hidden>
+    <div class="info-head">
+      <div>
+        <div class="card-kicker">発車案内</div>
+        <div id="station-name"></div>
+      </div>
+      <button id="station-close" class="icon" aria-label="閉じる">×</button>
+    </div>
+    <ol id="station-deps"></ol>
+    <button id="station-reach">ここから行ける範囲（到達圏）を表示</button>
+    <p id="station-empty" class="note" hidden>3 時間以内に発車する列車はありません。</p>
+    <p id="station-source" class="note"></p>
+  </div>
+
+  <div id="airport" class="card" hidden>
+    <div class="info-head">
+      <div>
+        <div class="card-kicker">空港の利用状況（2025年）</div>
+        <div id="airport-name"></div>
+      </div>
+      <button id="airport-close" class="icon" aria-label="閉じる">×</button>
+    </div>
+    <div class="stat-big"><span id="airport-total"></span><small>乗降客数</small></div>
+    <div id="airport-split" class="stat-sub"></div>
+    <div id="airport-meta" class="stat-sub"></div>
+    <h3>月別の乗降客数（2025年）</h3>
+    <div class="mini-chart">
+      <svg id="airport-monthly" role="img"></svg>
+      <div id="airport-monthly-tip" class="chart-tip" hidden></div>
+    </div>
+    <h3>乗降客数の推移</h3>
+    <div class="mini-chart">
+      <svg id="airport-trend" role="img"></svg>
+      <div id="airport-trend-tip" class="chart-tip" hidden></div>
+    </div>
+    <details class="daychart-table">
+      <summary>表で見る</summary>
+      <table id="airport-table"><thead><tr><th>年</th><th>乗降客数</th><th>着陸回数</th></tr></thead><tbody></tbody></table>
+    </details>
+    <div class="flight-lists">
+      <div><h3>まもなく出発</h3><ol id="airport-deps" class="flight-list"></ol></div>
+      <div><h3>まもなく到着</h3><ol id="airport-arrs" class="flight-list"></ol></div>
+    </div>
+    <p class="note">乗降客数・着陸回数: 国土交通省「空港管理状況調書」。空港の位置・運用時間: 国土数値情報（空港データ）。発着便は就航路線と便数からの推計です。</p>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="data/network.js"></script>
+  <script src="js/sim.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
