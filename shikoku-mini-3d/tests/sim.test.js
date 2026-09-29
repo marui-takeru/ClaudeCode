@@ -280,3 +280,17 @@ test('松山駅の発車案内: 宇和海は日中 毎時30分、伊予西条方
   assert.ok(t('uwakai', '12:30') && t('uwakai', '13:30'));
   assert.ok(t('matsuyama_saijo', '13:58') || t('matsuyama_kanonji', '12:58'));
 });
+
+test('今治・八幡浜の発車パターン: 今治発 松山行き普通は毎時04分ごろ、八幡浜発 伊予灘線経由は奇数時44分', () => {
+  const board = (st, t) => {
+    const node = W.NETWORK.services.flatMap(s => s.path).find(p => p[0] === st);
+    return sim.departuresAt(st, node[1], t, { limit: 40, horizon: 3 * 3600, radius: 150 })
+      .map(d => [d.service.id, W.Sim.formatTime(d.time).slice(0, 5)]);
+  };
+  const im = board('今治', H(11.9));
+  assert.ok(im.some(([id, t]) => id === 'matsuyama_saijo' && t === '12:04'));
+  assert.ok(im.some(([id, t]) => id === 'matsuyama_saijo' && t === '13:04'));
+  const yw = board('八幡浜', H(13.5));
+  assert.ok(yw.some(([id, t]) => id === 'nagahama_local' && t === '13:44'));
+  assert.ok(yw.some(([id, t]) => id === 'yosan_uwajima' && t === '14:34'));
+});
