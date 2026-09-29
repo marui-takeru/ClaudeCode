@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""OpenStreetMap の線路データから、駅と駅の間の実際の線路形状を作るスクリプト。
+"""線路データから、駅と駅の間の実際の線路形状を作るスクリプト。
 
-  python3 tools/build_tracks.py                 # Overpass API から取得 (結果は tools/osm_rail.json に保存)
+  python3 tools/build_tracks.py --n02 N02-24_RailroadSection.geojson   # 国土数値情報 鉄道データ (推奨)
+  python3 tools/build_tracks.py                 # OpenStreetMap: Overpass API から取得 (tools/osm_rail.json に保存)
   python3 tools/build_tracks.py osm_rail.json   # 保存済みの OSM データを使う
 
 出力: tools/track_shapes.json
@@ -128,18 +129,19 @@ class RailGraph:
         for el in osm["elements"]:
             if el["type"] == "node":
                 self.coord[el["id"]] = (el["lon"], el["lat"])
-        self.adj = {}  # node -> [(neighbor, length, railway, is_service)]
+        self.adj = {}  # node -> [(neighbor, length, railway, is_service, operator)]
         for el in osm["elements"]:
             if el["type"] != "way":
                 continue
             tags = el.get("tags", {})
             railway = tags.get("railway")
             service = "service" in tags
+            op = tags.get("operator")
             nodes = [n for n in el["nodes"] if n in self.coord]
             for a, b in zip(nodes, nodes[1:]):
                 d = meters(self.coord[a], self.coord[b])
-                self.adj.setdefault(a, []).append((b, d, railway, service))
-                self.adj.setdefault(b, []).append((a, d, railway, service))
+                self.adj.setdefault(a, []).append((b, d, railway, service, op))
+                self.adj.setdefault(b, []).append((a, d, railway, service, op))
         # 近傍探索用の格子 (約 500m 四方)
         self.grid = {}
         for n in self.adj:
@@ -150,18 +152,35 @@ class RailGraph:
         return (int(c[0] / 0.005), int(c[1] / 0.005))
 
     @staticmethod
-    def allowed(kind, railway):
+    def cost_factor(kind, edge, operator=None):
+        """辺を通るときの距離の倍率。通れない辺は None。
+        operator を指定すると、事業者が分かっている辺はその事業者のものだけを通る。"""
+        _, _, railway, service, op = edge
+        if operator and op and op != operator:
+            return None
+        rail = railway in ("rail", "light_rail", "narrow_gauge")
         if kind == "tram":
-            return railway == "tram"
-        return railway in ("rail", "light_rail", "narrow_gauge")
+            # 伊予鉄の城北線のように、法律上は鉄道でも路面電車が走る区間がある。
+            # 同じ事業者の鉄道線は通れるが、路面電車の線路を優先する
+            if railway == "tram":
+                factor = 1.0
+            elif rail and operator and op == operator:
+                factor = 3.0
+            else:
+                return None
+        elif rail:
+            factor = 1.0
+        else:
+            return None
+        return factor * (4.0 if service else 1.0)  # 側線・渡り線は避ける
 
-    def nearest(self, c, kind, k=SNAP_CANDIDATES):
+    def nearest(self, c, kind, k=SNAP_CANDIDATES, operator=None):
         cx, cy = self._cell(c)
         found = []
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
                 for n in self.grid.get((cx + dx, cy + dy), []):
-                    if not any(self.allowed(kind, e[2]) for e in self.adj[n]):
+                    if not any(self.cost_factor(kind, e, operator) for e in self.adj[n]):
                         continue
                     d = meters(c, self.coord[n])
                     if d <= SNAP_RADIUS:
@@ -176,7 +195,7 @@ class RailGraph:
                 break
         return picked
 
-    def shortest(self, src, dst, kind, limit):
+    def shortest(self, src, dst, kind, limit, operator=None):
         """src から dst までの最短経路 (ノード列)。limit [m] を超えたら打ち切る。"""
         dist = {src: 0.0}
         prev = {}
@@ -191,10 +210,12 @@ class RailGraph:
                 return d, path[::-1]
             if d > dist.get(n, math.inf) or d > limit:
                 continue
-            for m, length, railway, service in self.adj[n]:
-                if not self.allowed(kind, railway):
+            for edge in self.adj[n]:
+                factor = self.cost_factor(kind, edge, operator)
+                if not factor:
                     continue
-                cost = d + length * (4.0 if service else 1.0)  # 側線・渡り線は避ける
+                m, length = edge[0], edge[1]
+                cost = d + length * factor
                 if cost < dist.get(m, math.inf):
                     dist[m] = cost
                     prev[m] = n
@@ -234,14 +255,14 @@ def simplify(points, tol):
     return [p for p, kp in zip(points, keep) if kp]
 
 
-def segment_shape(graph, a, b, kind):
+def segment_shape(graph, a, b, kind, operator=None):
     """駅 a から駅 b への線路形状 (中間点のみ)。見つからなければ None。"""
     straight = meters(a, b)
     limit = straight * MAX_DETOUR + 1000
     best = None
-    for da, na in graph.nearest(a, kind):
-        for db, nb in graph.nearest(b, kind):
-            res = graph.shortest(na, nb, kind, limit)
+    for da, na in graph.nearest(a, kind, operator=operator):
+        for db, nb in graph.nearest(b, kind, operator=operator):
+            res = graph.shortest(na, nb, kind, limit, operator)
             if res is None:
                 continue
             cost = res[0] + da + db
@@ -255,8 +276,42 @@ def segment_shape(graph, a, b, kind):
     return [[round(x, 6), round(y, 6)] for x, y in pts[1:-1]]
 
 
+# build_network.py の事業者名 -> 国土数値情報 (N02) の運営会社名
+N02_OPERATOR = {"JR四国": "四国旅客鉄道"}
+
+
+def load_n02(path):
+    """国土数値情報「鉄道データ (N02)」の RailroadSection (GeoJSON) を OSM 形式に変換する。
+    端点の座標が同じ区間どうしをつなぐ。N02_001 = 21 (軌道) は路面電車、11/12 は鉄道。"""
+    data = json.load(open(path, encoding="utf-8"))
+    ids, elements = {}, []
+
+    def node(c):
+        key = (round(c[0], 7), round(c[1], 7))
+        if key not in ids:
+            ids[key] = len(ids) + 1
+            elements.append({"type": "node", "id": ids[key], "lon": key[0], "lat": key[1]})
+        return ids[key]
+
+    for k, f in enumerate(data["features"]):
+        p = f["properties"]
+        kind = {"11": "rail", "12": "rail", "21": "tram"}.get(p["N02_001"])
+        coords = f["geometry"]["coordinates"]
+        lon, lat = coords[0]
+        if not kind or not (BBOX[0] <= lat <= BBOX[2] and BBOX[1] <= lon <= BBOX[3]):
+            continue
+        elements.append({"type": "way", "id": k + 1, "nodes": [node(c) for c in coords],
+                         "tags": {"railway": kind, "operator": p["N02_004"], "name": p["N02_003"]}})
+    return {"elements": elements}
+
+
 def main():
-    osm = fetch_osm(sys.argv[1] if len(sys.argv) > 1 else None)
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("osm", nargs="?", help="保存済みの OSM データ (JSON)。省略時は Overpass API から取得")
+    ap.add_argument("--n02", help="国土数値情報 鉄道データの RailroadSection.geojson を使う")
+    args = ap.parse_args()
+    osm = load_n02(args.n02) if args.n02 else fetch_osm(args.osm)
     graph = RailGraph(osm)
     print(f"graph: {len(graph.adj)} nodes", file=sys.stderr)
     by_line = build_network.load_stations(None)
@@ -266,7 +321,11 @@ def main():
         segs = []
         ok = 0
         for (na, ca), (nb, cb) in zip(line["stations"], line["stations"][1:]):
-            shape = segment_shape(graph, ca, cb, line["kind"])
+            operator = N02_OPERATOR.get(line["operator"], line["operator"]) if args.n02 else None
+            shape = segment_shape(graph, ca, cb, line["kind"], operator)
+            if shape is None and operator:
+                # 他社の線路を走る区間 (例: 予土線の窪川〜若井は土佐くろしお鉄道) は事業者を問わず探す
+                shape = segment_shape(graph, ca, cb, line["kind"])
             if shape is None:
                 report.append(f"  {line['name']}: {na} - {nb} は直線のまま")
                 segs.append([])
@@ -275,6 +334,8 @@ def main():
                 segs.append(shape)
         shapes[key] = segs
         print(f"{line['name']}: {ok}/{len(segs)} 区間", file=sys.stderr)
+    # 出典 (build_network.py が地図の出典表記に使う)
+    shapes["_source"] = ("国土数値情報（鉄道データ）" if args.n02 else "OpenStreetMap")
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(shapes, f, ensure_ascii=False, separators=(",", ":"))
     if report:

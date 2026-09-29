@@ -70,10 +70,13 @@ tools/build_network.py  data/network.js の生成スクリプト
 python3 tools/build_network.py   # 駅座標データを取得して data/network.js を再生成
 ```
 
-### 線路を実際の形にする (OpenStreetMap)
+### 線路を実際の形にする (国土数値情報 / OpenStreetMap)
 
 ```sh
-python3 tools/build_tracks.py    # Overpass API から四国の線路を取得し、駅間の形状を tools/track_shapes.json に保存
+# 国土数値情報 鉄道データ (https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N02-2024.html) を使う (推奨)
+python3 tools/build_tracks.py --n02 N02-24_RailroadSection.geojson
+# または OpenStreetMap (Overpass API。混雑時は OVERPASS_URL でミラーを指定)
+python3 tools/build_tracks.py
 python3 tools/build_network.py   # track_shapes.json があれば自動で取り込む
 ./tools/sync_public.sh           # 公開リポジトリへコピー
 ```
@@ -106,13 +109,12 @@ python3 -m unittest discover tests       # 線路形状の経路探索・GTFS �
 - **ことでん・とさでん交通・阿佐海岸鉄道は、公開されている時刻表データ（GTFS）で走ります**（平日／土休日ダイヤを日付で自動切り替え）。
 - **それ以外（伊予鉄・JR 四国など）の列車位置は実際の運行ではありません。** 公開時刻表を参考にした運転間隔の概算で、遅延や臨時列車は反映されません。
   坊っちゃん列車や 6 系統などの運行区間・時刻は変更があり得るので要確認です。
-- **線路形状は駅と駅を直線で結んだ近似**です。市内電車ではほぼ道路に沿いますが、JR の山間部では実際の線形とずれます。
+- 線路の形は「国土数値情報（鉄道データ）」（国土交通省）を加工して作成しています（ことでん志度線 瓦町〜今橋 の 1 区間のみ直線）。
 - 列車は終点に着くと 1〜2 分停車したあと消えます（到着列車がそのまま折り返す運用は再現していません）。
 - 平日・土休日の区別や、ラッシュ時の増発はありません。
 
 ## 今後の発展案
 
-1. **線路形状の精緻化**: 国土数値情報「鉄道データ (N02)」や OpenStreetMap の線形に置き換える。
 2. **実ダイヤ化**: 伊予鉄グループや JR 四国が公開する GTFS / GTFS-JP があれば取り込み、パターン推計を実時刻表に置き換える
    (Mini Tokyo 3D にも [GTFS プラグイン](https://www.npmjs.com/package/mt3d-plugin-gtfs) があります)。
 3. **リアルタイム化**: 伊予鉄の電車・バス接近情報など、列車位置のデータが利用可能になれば遅延を反映。
@@ -121,6 +123,7 @@ python3 -m unittest discover tests       # 線路形状の経路探索・GTFS �
 
 ## データ出典
 
+- 線路: 「国土数値情報（鉄道データ）」（国土交通省）を加工して作成
 - 時刻表: ことでん（高松琴平電気鉄道）GTFS、とさでん交通 GTFS、阿佐海岸鉄道 GTFS（いずれも CC BY 4.0）
 - 駅座標: [駅データ.jp](https://ekidata.jp/) (取得元: [piuccio/open-data-jp-railway-stations](https://github.com/piuccio/open-data-jp-railway-stations))。
   公開・再配布する場合は駅データ.jp の利用規約を確認してください。

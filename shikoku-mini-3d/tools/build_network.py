@@ -420,6 +420,7 @@ def main():
         services=services,
     )
     merge_gtfs(net)
+    net["trackSource"] = load_shapes().get("_source")
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("// 路線・駅・運行パターンのデータ (自動生成)\n")
         f.write("window.NETWORK = ")
