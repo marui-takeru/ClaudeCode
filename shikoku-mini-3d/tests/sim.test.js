@@ -195,8 +195,9 @@ test('マリンライナー: 児島→坂出→高松 (宇多津を通らない)
   const km = (p.cum[sakaide] - p.cum[kojima]) / 1000;
   assert.ok(km > 19.5 && km < 21, `児島〜坂出 ${km.toFixed(2)} km`);
   assert.equal(names[names.length - 1], '高松');
-  const day = p.departures.filter(d => d >= H(10) && d < H(16));
-  assert.equal(day.length, 12);
+  assert.equal(p.departures.length, 37, '平日 37 本 (運行本数データ: 児島→坂出 38 本)');
+  const gaps = p.departures.slice(1).map((d, i) => d - p.departures[i]);
+  assert.ok(Math.max(...gaps) <= 45 * 60, '日中も 45 分以上あかない');
 });
 
 test('宇多津で しおかぜ と いしづち が併結・切り離しする', () => {
@@ -230,4 +231,36 @@ test('宇多津で しおかぜ と いしづち が併結・切り離しする'
   // 併結中は いしづち 単独の列車を表示しない
   const t = sDown.departures[5] + sd.dep + 60;
   assert.ok(!sim.trainsAt(t, () => true).some(x => x.pattern === iDown));
+});
+
+test('JR四国の普通・快速: 区間ごとの平日の本数が「全国鉄道運行本数データ」とほぼ一致する', () => {
+  // [区間の両端, 起点→終点の本数, 逆方向の本数] (2026 年版、普通・快速のみ。特急は含まない)
+  const REAL = [
+    ['児島', '坂出', 38, 35], ['高松', '坂出', 82, 84], ['坂出', '多度津', 47, 45], ['多度津', '観音寺', 22, 24],
+    ['観音寺', '新居浜', 18, 19], ['伊予西条', '今治', 16, 16], ['伊予北条', '松山', 24, 22], ['松山', '伊予市', 25, 25],
+    ['伊予市', '向井原', 17, 17], ['伊予大洲', '八幡浜', 10, 10], ['多度津', '琴平', 28, 27], ['琴平', '佃', 6, 6],
+    ['大歩危', '土佐山田', 4, 4], ['後免', '高知', 38, 36], ['伊野', '須崎', 17, 19], ['須崎', '窪川', 5, 5],
+    ['高松', 'オレンジタウン', 27, 27], ['引田', '板野', 6, 5], ['佐古', '徳島', 63, 60], ['徳島', '阿南', 30, 31],
+    ['牟岐', '阿波海南', 8, 8], ['穴吹', '佃', 10, 11], ['江川崎', '近永', 8, 8],
+  ];
+  sim.setDayType('weekday');
+  for (const [a, b, f, r] of REAL) {
+    let F = 0, R = 0;
+    for (const p of sim.patterns) {
+      const sv = p.service;
+      if (sv.kind !== 'rail' || sv.group === 'jr_ltd') continue;
+      const names = p.path.map(x => x[0]);
+      const ia = names.indexOf(a), ib = names.indexOf(b);
+      if (ia < 0 || ib < 0) continue;
+      if (ia < ib) F += p.departures.length; else R += p.departures.length;
+    }
+    assert.ok(Math.abs(F - f) <= 2 && Math.abs(R - r) <= 2, `${a}〜${b}: ${F}/${R} 本 (実際 ${f}/${r})`);
+  }
+});
+
+test('朝夕は増結する系統がある (マリンライナー 5 → 7 両)', () => {
+  const sv = W.NETWORK.services.find(s => s.id === 'marine');
+  assert.equal(W.Sim.carsFor(sv, H(12)), 5);
+  assert.equal(W.Sim.carsFor(sv, H(7.5)), 7);
+  assert.equal(W.Sim.carsFor(sv, H(7.5) + 86400), 7, '日付をまたいでも同じ');
 });

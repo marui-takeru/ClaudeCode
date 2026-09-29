@@ -149,20 +149,57 @@ def bands(spec, headway):
     return [(a, b, headway) for a, b in spec]
 
 
+def _hm(t):
+    h, m = t.split(":")
+    return int(h) * 60 + int(m)
+
+
+RUSH = (("06:30", "08:30"), ("16:30", "19:00"))
+
+
+def spread(n, first, last, peak=2.0, rush=RUSH):
+    """first〜last に n 本を並べる。rush の時間帯は peak 倍の密度にする (朝夕の増発の再現)"""
+    a, b = _hm(first), _hm(last)
+    if n <= 1:
+        return [first][:n]
+    step = 1
+    mins = list(range(a, b + 1, step))
+    w = [peak if any(_hm(x) <= m < _hm(y) for x, y in rush) else 1.0 for m in mins]
+    cum = [0.0]
+    for x in w[:-1]:
+        cum.append(cum[-1] + x)
+    total = cum[-1]
+    out, j = [], 0
+    for i in range(n):
+        target = total * i / (n - 1)
+        while j < len(cum) - 1 and cum[j + 1] <= target:
+            j += 1
+        out.append(mins[j])
+    out = sorted(set(out))
+    return [f"{m // 60:02d}:{m % 60:02d}" for m in out]
+
+
+def daily(n, first, last, rfirst=None, rlast=None, peak=2.0, nr=None):
+    """平日 1 日の本数 n (上りは nr) を、始発・終発の時刻の間に並べた発車時刻。
+    本数は「全国鉄道運行本数データ」(区間ごとの平日の本数) に合わせ、時刻は推計"""
+    return dict(departures=spread(n, first, last, peak),
+                departuresReturn=spread(nr or n, rfirst or first, rlast or last, peak))
+
+
 SUBURBAN = [("05:30", "07:00", 20), ("07:00", "21:30", 15), ("21:30", "23:30", 30)]
 
 SERVICES = [
     # ======== 松山 市内電車 ========
     dict(TRAM, id="iyo1", name="1系統 環状線 右回り", line="iyo_loop", loop=True,
-         route=[("iyo_loop", None, None)], bands=bands(DAY, 15)),
+         route=[("iyo_loop", None, None)], **daily(91, "06:20", "22:30", peak=1.2)),
     dict(TRAM, id="iyo2", name="2系統 環状線 左回り", line="iyo_loop", loop=True, reverse=True,
-         route=[("iyo_loop", None, None)], bands=bands(DAY, 15), offset=7),
+         route=[("iyo_loop", None, None)], **daily(91, "06:26", "22:36", peak=1.2)),
     dict(TRAM, id="iyo3", name="3系統 松山市駅前〜道後温泉", line="iyo_shieki", both=True,
-         route=[("iyo_shieki", "松山市駅前", "道後温泉")], bands=bands(DAY, 10)),
+         route=[("iyo_shieki", "松山市駅前", "道後温泉")], **daily(75, "06:10", "22:20", "06:30", "22:45", peak=1.2)),
     dict(TRAM, id="iyo5", name="5系統 JR松山駅前〜道後温泉", line="iyo_ekimae", both=True,
-         route=[("iyo_ekimae", "松山駅前", "道後温泉")], bands=bands(DAY, 12), offset=3),
+         route=[("iyo_ekimae", "松山駅前", "道後温泉")], **daily(68, "06:15", "22:15", "06:35", "22:40", peak=1.2)),
     dict(TRAM, id="iyo6", name="6系統 本町六丁目〜松山市駅前", line="iyo_honmachi", both=True,
-         route=[("iyo_honmachi", "本町六丁目", "松山市駅前")], bands=bands(DAY, 30), offset=5),
+         route=[("iyo_honmachi", "本町六丁目", "松山市駅前")], **daily(7, "07:10", "19:10", "07:30", "19:30", peak=1.0)),
     dict(TRAM, id="botchan", name="坊っちゃん列車", line="iyo_shieki", both=True,
          color="#6D3B1F", cars=2, carLength=9, height=3.4, speed=12, dwell=30,
          route=[("iyo_shieki", "道後温泉", "松山市駅前")],
@@ -189,47 +226,96 @@ SERVICES = [
                                  ("21:00", "22:31", 30)]},
          bandsByDayReturn={"weekday": [("05:35", "06:16", 40), ("06:37", "08:24", 21), ("08:53", "20:39", 15),
                                        ("21:08", "22:09", 30)]}),
-    # ======== JR四国 普通 ========
-    dict(JR_LOCAL, id="yosan_takamatsu", name="予讃線 普通", line="jr_yosan", both=True,
-         route=[("jr_yosan", "高松", "多度津")], bands=[("05:30", "23:00", 30)]),
+    # ======== JR四国 普通・快速 ========
+    # 系統 (始発〜終着) ごとの 1 日の本数は、区間ごとの平日の本数 (全国鉄道運行本数データ 2026 年版。
+    # 普通・快速のみ) に合うように割り振った推計。発車時刻と朝夕の増発は推計 (実際の時刻ではない)。
+    # 両数は車両形式から (7200系 2両・7000系 1両・1000形/1500形 1〜2両 など)、朝夕は増結
+    # -- 予讃線 高松〜松山 (高松〜坂出 47 + マリンライナー、坂出〜多度津 46、多度津〜観音寺 23、
+    #    観音寺〜伊予西条 18、伊予西条〜今治〜伊予北条 16、伊予北条〜松山 23)
     dict(JR_LOCAL, id="yosan_kanonji", name="予讃線 普通", line="jr_yosan", both=True,
-         route=[("jr_yosan", "多度津", "伊予西条")], bands=[("05:30", "22:00", 60)], offset=15),
-    dict(JR_LOCAL, id="yosan_imabari", name="予讃線 普通", line="jr_yosan", both=True,
-         route=[("jr_yosan", "伊予西条", "松山")], bands=[("05:30", "22:30", 60)], offset=25),
-    dict(JR_LOCAL, id="yosan_iyoshi", name="予讃線 普通", line="jr_yosan_uchiko", both=True,
-         route=[("jr_yosan_uchiko", "松山", "伊予市")], bands=[("05:30", "23:00", 60)], offset=40),
-    dict(JR_LOCAL, id="uchiko_local", name="内子線 普通", line="jr_yosan_uchiko", both=True,
-         route=[("jr_yosan_uchiko", "松山", "内子")], bands=[("06:00", "21:00", 120)], offset=10),
+         route=[("jr_yosan", "高松", "観音寺")], rushCars=4, **daily(13, "05:40", "22:50", "05:30", "22:40")),
+    dict(JR_LOCAL, id="yosan_saijo", name="予讃線 普通", line="jr_yosan", both=True,
+         route=[("jr_yosan", "高松", "伊予西条")], **daily(10, "06:10", "20:40", "05:20", "20:10")),
+    dict(JR_LOCAL, id="yosan_tadotsu", name="予讃線 普通", line="jr_yosan", both=True,
+         route=[("jr_yosan", "高松", "多度津")], rushCars=4, **daily(5, "06:30", "23:20", "06:00", "22:30")),
+    dict(JR_LOCAL, id="takamatsu_kotohira", name="予讃線・土讃線 普通", line="jr_dosan", both=True,
+         route=[("jr_yosan", "高松", "多度津"), ("jr_dosan", "多度津", "琴平")], rushCars=4,
+         **daily(18, "05:55", "23:00", "05:35", "22:30")),
+    dict(JR_LOCAL, id="yosan_kanonji_saijo", name="予讃線 普通", line="jr_yosan", both=True, cars=1,
+         route=[("jr_yosan", "観音寺", "伊予西条")], **daily(8, "05:50", "21:30", "05:30", "21:00")),
+    dict(JR_LOCAL, id="yosan_imabari", name="予讃線 普通", line="jr_yosan", both=True, cars=1, rushCars=2,
+         route=[("jr_yosan", "伊予西条", "松山")], **daily(16, "05:15", "22:10", "05:25", "22:20")),
+    dict(JR_LOCAL, id="yosan_hojo", name="予讃線 普通", line="jr_yosan", both=True, cars=1, rushCars=2,
+         route=[("jr_yosan", "伊予北条", "松山")], **daily(7, "06:20", "21:40", "06:45", "22:40", peak=3.0)),
+    # -- 予讃線 松山以南 (松山〜伊予市 25、伊予市〜向井原 17、伊予灘線 9、内子線経由 8、
+    #    伊予大洲〜八幡浜 10、八幡浜〜宇和島 8)
+    dict(JR_LOCAL, id="yosan_iyoshi", name="予讃線 普通", line="jr_yosan_uchiko", both=True, cars=1, rushCars=2,
+         route=[("jr_yosan_uchiko", "松山", "伊予市")], **daily(8, "06:15", "23:05", "06:40", "23:30", peak=3.0)),
+    dict(JR_LOCAL, id="uchiko_local", name="予讃線 普通 (内子経由)", line="jr_yosan_uchiko", both=True, cars=1,
+         route=[("jr_yosan_uchiko", "松山", "伊予大洲")], **daily(8, "05:50", "21:50", "05:20", "21:00")),
     dict(JR_LOCAL, id="nagahama_local", name="予讃線 普通 (伊予灘経由)", line="jr_yosan_nagahama", both=True,
          cars=1, route=[("jr_yosan_uchiko", "松山", "向井原"), ("jr_yosan_nagahama", "向井原", "伊予大洲")],
-         bands=[("06:00", "20:00", 120)], offset=50),
-    dict(JR_LOCAL, id="yosan_uwajima", name="予讃線 普通", line="jr_yosan_uchiko", both=True,
-         route=[("jr_yosan_uchiko", "伊予大洲", "宇和島")], bands=[("06:00", "21:30", 90)], offset=20),
+         **daily(9, "05:40", "21:20", "05:10", "20:40")),
+    dict(JR_LOCAL, id="yosan_uwajima", name="予讃線 普通", line="jr_yosan_uchiko", both=True, cars=1,
+         route=[("jr_yosan_uchiko", "伊予大洲", "宇和島")], **daily(8, "05:30", "21:30", "05:05", "20:40")),
+    dict(JR_LOCAL, id="yosan_yawatahama", name="予讃線 普通", line="jr_yosan_uchiko", both=True, cars=1,
+         route=[("jr_yosan_uchiko", "伊予大洲", "八幡浜")], **daily(2, "07:05", "18:10", "06:40", "17:30")),
+    # -- 土讃線 (多度津〜琴平 28、琴平〜阿波池田 6、阿波池田〜大歩危 8、大歩危〜土佐山田 4、
+    #    土佐山田〜後免 23、後免〜高知 37 (ごめん・なはり線の直通を含む)、高知〜伊野 26、伊野〜須崎 18、須崎〜窪川 5)
     dict(JR_LOCAL, id="dosan_kotohira", name="土讃線 普通", line="jr_dosan", both=True,
-         route=[("jr_dosan", "多度津", "琴平")], bands=[("06:00", "22:30", 30)], offset=12),
+         route=[("jr_dosan", "多度津", "琴平")], **daily(10, "06:20", "22:20", "06:00", "21:50")),
     dict(JR_LOCAL, id="dosan_ikeda", name="土讃線 普通", line="jr_dosan", both=True, cars=1,
-         route=[("jr_dosan", "琴平", "阿波池田")], bands=[("06:00", "20:00", 120)], offset=30),
+         route=[("jr_dosan", "琴平", "阿波池田")], **daily(6, "06:10", "20:30", "05:45", "20:00")),
     dict(JR_LOCAL, id="dosan_otoyo", name="土讃線 普通", line="jr_dosan", both=True, cars=1,
-         route=[("jr_dosan", "阿波池田", "土佐山田")], bands=[("06:00", "20:00", 120)], offset=50),
-    dict(JR_LOCAL, id="dosan_kochi", name="土讃線 普通", line="jr_dosan", both=True,
-         route=[("jr_dosan", "土佐山田", "伊野")], bands=[("05:30", "23:00", 30)], offset=5),
+         route=[("jr_dosan", "阿波池田", "大歩危")], **daily(4, "07:20", "20:10", "06:30", "19:20")),
+    dict(JR_LOCAL, id="dosan_sanchu", name="土讃線 普通", line="jr_dosan", both=True, cars=1,
+         route=[("jr_dosan", "阿波池田", "高知")], **daily(4, "06:05", "18:40", "05:50", "18:00")),
+    dict(JR_LOCAL, id="dosan_kochi", name="土讃線 普通", line="jr_dosan", both=True, cars=1, rushCars=2,
+         route=[("jr_dosan", "土佐山田", "高知")], **daily(11, "05:50", "22:40", "05:30", "22:10")),
+    dict(JR_LOCAL, id="dosan_ino", name="土讃線 普通", line="jr_dosan", both=True, cars=1, rushCars=2,
+         route=[("jr_dosan", "土佐山田", "伊野")], **daily(8, "06:15", "21:30", "06:00", "21:10")),
     dict(JR_LOCAL, id="dosan_susaki", name="土讃線 普通", line="jr_dosan", both=True, cars=1,
-         route=[("jr_dosan", "伊野", "窪川")], bands=[("06:00", "21:00", 90)], offset=35),
-    dict(JR_LOCAL, id="kotoku_local", name="高徳線 普通", line="jr_kotoku", both=True,
-         route=[("jr_kotoku", "高松", "三本松")], bands=[("05:30", "23:00", 60)], offset=20),
+         route=[("jr_dosan", "高知", "須崎")], **daily(13, "05:40", "22:30", "05:20", "21:50")),
+    dict(JR_LOCAL, id="dosan_kubokawa", name="土讃線 普通", line="jr_dosan", both=True, cars=1,
+         route=[("jr_dosan", "高知", "窪川")], **daily(5, "06:00", "19:30", "05:10", "18:40")),
+    # -- 高徳線 (高松〜オレンジタウン 27、〜三本松 20、〜引田 18、引田〜板野 6、板野〜池谷 16、
+    #    池谷〜佐古 32 (鳴門線の直通を含む)、佐古〜徳島 62 (徳島線を含む))
+    dict(JR_LOCAL, id="kotoku_orange", name="高徳線 普通", line="jr_kotoku", both=True, cars=1, rushCars=2,
+         route=[("jr_kotoku", "高松", "オレンジタウン")], **daily(7, "06:40", "22:40", "06:20", "22:10", peak=3.0)),
+    dict(JR_LOCAL, id="kotoku_sanbonmatsu", name="高徳線 普通", line="jr_kotoku", both=True, cars=1,
+         route=[("jr_kotoku", "高松", "三本松")], **daily(2, "07:10", "18:20", "06:30", "17:40")),
+    dict(JR_LOCAL, id="kotoku_local", name="高徳線 普通", line="jr_kotoku", both=True, cars=1, rushCars=2,
+         route=[("jr_kotoku", "高松", "引田")], **daily(15, "05:45", "23:00", "05:20", "22:20")),
+    dict(JR_LOCAL, id="kotoku_through", name="高徳線 普通", line="jr_kotoku", both=True, cars=1,
+         route=[("jr_kotoku", "高松", "徳島")], **daily(3, "06:10", "19:30", "05:50", "19:00")),
     dict(JR_LOCAL, id="kotoku_south", name="高徳線 普通", line="jr_kotoku", both=True, cars=1,
-         route=[("jr_kotoku", "三本松", "徳島")], bands=[("06:00", "21:30", 90)], offset=40),
-    dict(JR_LOCAL, id="tokushima_local", name="徳島線 普通", line="jr_tokushima", both=True,
-         route=[("jr_tokushima", "徳島", "阿波池田")], bands=[("06:00", "21:30", 60)], offset=8),
-    dict(JR_LOCAL, id="mugi_local", name="牟岐線 普通", line="jr_mugi", both=True,
-         route=[("jr_mugi", "徳島", "阿南")], bands=[("05:30", "23:00", 30)], offset=17),
-    dict(JR_LOCAL, id="mugi_south", name="牟岐線 普通", line="jr_mugi", both=True, cars=1,
-         route=[("jr_mugi", "阿南", "阿波海南")], bands=[("06:00", "20:00", 120)], offset=45),
-    dict(JR_LOCAL, id="naruto_local", name="鳴門線 普通", line="jr_naruto", both=True,
+         route=[("jr_kotoku", "引田", "徳島")], **daily(3, "07:30", "20:40", "06:20", "20:00")),
+    dict(JR_LOCAL, id="kotoku_itano", name="高徳線 普通", line="jr_kotoku", both=True, cars=1, rushCars=2,
+         route=[("jr_kotoku", "板野", "徳島")], **daily(10, "06:00", "22:30", "05:40", "22:00")),
+    dict(JR_LOCAL, id="naruto_local", name="鳴門線 普通", line="jr_naruto", both=True, cars=1, rushCars=2,
          route=[("jr_kotoku", "徳島", "池谷"), ("jr_naruto", "池谷", "鳴門")],
-         bands=[("06:00", "22:30", 60)], offset=28),
+         **daily(16, "06:00", "22:40", "05:40", "22:00", nr=17)),
+    # -- 徳島線 (佐古〜阿波川島 30、阿波川島〜穴吹 21、穴吹〜佃 10)
+    dict(JR_LOCAL, id="tokushima_local", name="徳島線 普通", line="jr_tokushima", both=True, cars=1,
+         route=[("jr_tokushima", "徳島", "阿波池田")], **daily(10, "05:50", "21:40", "05:30", "20:50")),
+    dict(JR_LOCAL, id="tokushima_anabuki", name="徳島線 普通", line="jr_tokushima", both=True, cars=1, rushCars=2,
+         route=[("jr_tokushima", "徳島", "穴吹")], **daily(11, "06:15", "22:40", "05:40", "22:00")),
+    dict(JR_LOCAL, id="tokushima_kawashima", name="徳島線 普通", line="jr_tokushima", both=True, cars=1, rushCars=2,
+         route=[("jr_tokushima", "徳島", "阿波川島")], **daily(9, "06:30", "23:10", "06:10", "22:40", peak=3.0)),
+    # -- 牟岐線 (徳島〜阿南 30、阿南〜桑野 13、桑野〜牟岐 10、牟岐〜阿波海南 8)
+    dict(JR_LOCAL, id="mugi_local", name="牟岐線 普通", line="jr_mugi", both=True, cars=1, rushCars=2,
+         route=[("jr_mugi", "徳島", "阿南")], **daily(17, "05:50", "23:10", "05:30", "22:30")),
+    dict(JR_LOCAL, id="mugi_kuwano", name="牟岐線 普通", line="jr_mugi", both=True, cars=1,
+         route=[("jr_mugi", "徳島", "桑野")], **daily(3, "07:00", "21:10", "06:10", "20:10")),
+    dict(JR_LOCAL, id="mugi_mugi", name="牟岐線 普通", line="jr_mugi", both=True, cars=1,
+         route=[("jr_mugi", "徳島", "牟岐")], **daily(2, "12:10", "22:00", "05:40", "15:30")),
+    dict(JR_LOCAL, id="mugi_south", name="牟岐線 普通", line="jr_mugi", both=True, cars=1,
+         route=[("jr_mugi", "徳島", "阿波海南")], **daily(8, "06:05", "20:30", "05:00", "19:20")),
+    # -- 予土線 (若井〜江川崎 4、江川崎〜宇和島 8)
     dict(JR_LOCAL, id="yodo_local", name="予土線 普通", line="jr_yodo", both=True, cars=1,
-         route=[("jr_yodo", "窪川", "宇和島")], bands=[("06:00", "18:00", 180)], offset=0),
+         route=[("jr_yodo", "窪川", "宇和島")], **daily(4, "06:50", "17:50", "05:40", "17:10")),
+    dict(JR_LOCAL, id="yodo_ekawasaki", name="予土線 普通", line="jr_yodo", both=True, cars=1,
+         route=[("jr_yodo", "江川崎", "宇和島")], **daily(4, "06:10", "19:20", "07:30", "20:40")),
     # ======== JR四国 特急 ========
     # しおかぜ (岡山方面〜松山) と いしづち (高松〜松山) は、宇多津〜松山を 1 本の列車 (5 + 3 両) で走る。
     # 松山行き: しおかぜ が先に宇多津に着き、2 分半後に いしづち が後ろに着いて連結 (併結) してから発車。
@@ -249,20 +335,20 @@ SERVICES = [
     # 快速 マリンライナー (岡山〜高松)。四国側の児島から表示し、瀬戸大橋から坂出へ直接入る
     dict(JR_LOCAL, id="marine", name="快速 マリンライナー", line="jr_seto_ohashi_sakaide", both=True, cars=5,
          route=[("jr_seto_ohashi_sakaide", "児島", "坂出"), ("jr_yosan", "坂出", "高松")],
-         stops=["児島", "坂出", "高松"], speed=90, dwell=45, color="#29B6F6",
-         bands=[("06:02", "23:32", 30)], offset=0),
+         stops=["児島", "坂出", "高松"], speed=90, dwell=45, color="#29B6F6", rushCars=7,
+         **daily(37, "05:58", "23:58", "05:20", "23:10", peak=1.5, nr=36)),
     dict(JR_LTD, id="uwakai", name="特急 宇和海", line="jr_yosan_uchiko", both=True,
          route=[("jr_yosan_uchiko", "松山", "宇和島")],
          stops=["松山", "伊予市", "内子", "伊予大洲", "八幡浜", "卯之町", "宇和島"],
-         bands=[("05:30", "22:00", 60)], color="#B3E5FC", offset=20),
+         bands=[("05:30", "22:00", 60)], color="#B3E5FC", offset=20, cars=3),
     dict(JR_LTD, id="nanpu", name="特急 南風", line="jr_dosan", both=True,
          route=[("jr_seto_ohashi", "児島", "宇多津"), ("jr_yosan", "宇多津", "多度津"), ("jr_dosan", "多度津", "高知")],
          stops=["児島", "宇多津", "丸亀", "多度津", "善通寺", "琴平", "阿波池田", "大歩危", "土佐山田", "後免", "高知"],
-         bands=[("06:30", "20:30", 60)], color="#FFCDD2", offset=10),
+         bands=[("06:30", "20:30", 60)], color="#FFCDD2", offset=10, cars=3),
     dict(JR_LTD, id="uzushio", name="特急 うずしお", line="jr_kotoku", both=True,
          route=[("jr_kotoku", "高松", "徳島")],
          stops=["高松", "栗林", "屋島", "志度", "三本松", "引田", "板野", "池谷", "勝瑞", "徳島"],
-         bands=[("06:00", "22:00", 60)], color="#E1BEE7", offset=30),
+         bands=[("06:00", "22:00", 60)], color="#E1BEE7", offset=30, cars=2),
     dict(JR_LTD, id="tsurugisan", name="特急 剣山", line="jr_tokushima", both=True, cars=2,
          route=[("jr_tokushima", "徳島", "阿波池田")],
          stops=["徳島", "蔵本", "石井", "鴨島", "阿波川島", "阿波山川", "穴吹", "貞光", "阿波半田", "阿波加茂", "阿波池田"],
@@ -285,12 +371,19 @@ SERVICES = [
          bands=bands(DAY, 12), offset=4),
     dict(TRAM, id="tosaden_ino", name="とさでん 伊野線", line="tosaden_ino", both=True,
          route=[("tosaden_ino", "はりまや橋", "伊野")], bands=bands(DAY, 30), offset=9),
-    dict(JR_LOCAL, id="gomen_nahari", name="ごめん・なはり線", line="tkr_asa", both=True, cars=1,
-         route=[("tkr_asa", "後免", "奈半利")], bands=[("06:00", "22:00", 60)], offset=15),
+    dict(JR_LOCAL, id="gomen_nahari", name="ごめん・なはり線", line="tkr_asa", both=True, cars=1, rushCars=2,
+         route=[("jr_dosan", "高知", "後免"), ("tkr_asa", "後免", "奈半利")],
+         **daily(12, "05:50", "22:10", "05:10", "21:20")),
+    dict(JR_LOCAL, id="gomen_nahari_g", name="ごめん・なはり線", line="tkr_asa", both=True, cars=1,
+         route=[("tkr_asa", "後免", "奈半利")], **daily(8, "06:40", "23:00", "06:00", "22:20")),
+    dict(JR_LOCAL, id="gomen_aki", name="ごめん・なはり線", line="tkr_asa", both=True, cars=1,
+         route=[("jr_dosan", "高知", "後免"), ("tkr_asa", "後免", "安芸")], **daily(2, "07:20", "19:40", "06:50", "18:40")),
+    dict(JR_LOCAL, id="gomen_aki_g", name="ごめん・なはり線", line="tkr_asa", both=True, cars=1,
+         route=[("tkr_asa", "後免", "安芸")], **daily(3, "08:10", "21:40", "07:10", "20:30")),
     dict(JR_LOCAL, id="tkr_nakamura", name="中村線 普通", line="tkr_nakamura", both=True, cars=1,
-         route=[("tkr_nakamura", "窪川", "中村")], bands=[("06:00", "21:00", 120)], offset=70),
+         route=[("tkr_nakamura", "窪川", "中村")], **daily(9, "06:10", "21:50", "05:30", "21:00")),
     dict(JR_LOCAL, id="tkr_sukumo", name="宿毛線 普通", line="tkr_sukumo", both=True, cars=1,
-         route=[("tkr_sukumo", "中村", "宿毛")], bands=[("06:00", "21:00", 120)], offset=20),
+         route=[("tkr_sukumo", "中村", "宿毛")], **daily(13, "05:40", "22:30", "05:20", "22:00")),
     dict(JR_LOCAL, id="dmv", name="阿佐海岸鉄道 DMV", line="asa_kaigan", both=True, cars=1, carLength=9,
          speed=40, route=[("asa_kaigan", "海部", "甲浦")], bands=[("08:00", "17:00", 120)]),
 ]
@@ -449,7 +542,7 @@ def build_services(lines):
             path=[[RENAME.get(n, n) if n else "", c, 1 if n in stops else 0] for n, c in path],
         )
         for k in ("bands", "bandsByDay", "bandsByDayReturn", "departures", "departuresReturn", "note",
-                  "stopDwell", "couple", "coupleWith"):
+                  "stopDwell", "couple", "coupleWith", "rushCars"):
             if k in sv:
                 o[k] = sv[k]
         out.append(o)
