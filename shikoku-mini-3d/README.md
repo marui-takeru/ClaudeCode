@@ -1,0 +1,148 @@
+# Mini Shikoku 3D
+
+[Mini Tokyo 3D](https://minitokyo3d.com/) を参考にした、**松山を中心とした四国の鉄道の 3D 可視化**のプロトタイプです。
+3D 地図の上を列車が時刻に合わせて走ります。
+
+- 伊予鉄道の市内電車 (1・2・3・5・6 系統、坊っちゃん列車) と郊外電車 (高浜線・横河原線・郡中線)
+- JR 四国全線の普通列車と主な特急 (しおかぜ・いしづち、宇和海、南風、うずしお、剣山、あしずり)
+- 瀬戸大橋線 (児島〜宇多津・坂出) を渡る しおかぜ・南風・快速マリンライナー。宇多津での しおかぜ・いしづち の併結／切り離し
+- ことでん、とさでん交通、土佐くろしお鉄道、阿佐海岸鉄道 (DMV)
+- 主なフェリー・高速船と、四国 4 空港の航空便（推計）、空港の利用状況（国の統計）
+
+## 使い方
+
+ビルドは不要です。`index.html` をブラウザで開くか、静的サーバで配信してください。
+
+```sh
+cd shikoku-mini-3d
+python3 -m http.server 8000
+# → http://localhost:8000/
+```
+
+GitHub Pages などの静的ホスティングにそのまま置けます。
+
+| 操作 | 内容 |
+| --- | --- |
+| 列車をクリック | 系統・行先と、この先の停車駅・到着予定の一覧を表示。「追跡」でカメラが追従 |
+| 駅をクリック | その駅の発車案内（この先の発車時刻・系統・行先）を表示 |
+| 駅をさがす | 駅名を入力するとその駅へ移動し、発車案内を表示 |
+| 空港をクリック | 2025 年の乗降客数・着陸回数、月別・年別のグラフ、まもなく出発／到着する便 |
+| 到達圏 | 発車案内の「ここから行ける範囲（到達圏）を表示」で、その時刻に出発して各駅へ最短何分で着けるかを 5 段階で色分け表示。上限は 30/60/90 分から選択でき、「今の時刻で再計算」で時間帯ごとの比較ができる |
+| 実時間 / ×10 / ×60 / ×300 | 時間の進み方を変更 |
+| 時刻入力 | 任意の時刻へジャンプ (例: 朝ラッシュ 07:45) |
+| エリア | 松山中心部・道後・郊外・高松・徳島・高知・瀬戸大橋・四国全体へ移動 |
+| 路線 | 事業者・種別ごとの表示切り替え |
+| 1日の運行本数 | 表示中の路線について、時刻ごとの運行中の列車本数をグラフ表示。ホバーで値、クリックでその時刻へ移動。「表で見る」で 1 時間ごとの表 |
+| 表示 | 地図の昼夜（自動・ライト・ダーク）、3D 建物、地形 (標高) |
+| 撮影モード | パネルを隠してカメラをゆっくり回転（動画・GIF 撮影用）。Esc で終了。`?cinema` でも起動 |
+| この景色を共有 | 今の時刻・倍速・カメラ位置を含むリンクをコピー |
+| キー操作 | Space 一時停止、1〜4 倍速、N 現在時刻、C 撮影モード、F 追跡、Esc 閉じる |
+
+URL パラメータ: `?t=07:45` (開始時刻), `?speed=60`, `?view=dogo`, `?theme=light` / `?theme=dark` (昼夜の自動切り替えを止める), `?terrain`
+
+## 構成
+
+```
+index.html              画面
+css/style.css
+js/sim.js               運行シミュレーション (時刻 → 列車位置)
+js/app.js               地図・描画・UI (MapLibre GL JS)
+data/network.js         路線・駅・運行パターン (自動生成)
+tools/build_network.py  data/network.js の生成スクリプト
+```
+
+- 地図: [MapLibre GL JS](https://maplibre.org/) + [OpenFreeMap](https://openfreemap.org/) (OpenStreetMap ベース、API キー不要)。
+  読み込めない場合は国土地理院の淡色地図に切り替わります。
+- 地形: AWS Terrain Tiles (Terrarium)
+- 列車は `fill-extrusion` で車体・窓・屋根を積み重ねて描画し、ズームアウト時は見やすいよう大きさを誇張しています。
+- 光の向きと空の色は、シミュレーション時刻の太陽の位置（松山付近）に合わせて朝・昼・夕・夜と変化します。
+- 始発駅では発車の数分前から列車がホームで待機します。
+- 日没後は地図が夜のデザインに切り替わり、列車の前照灯と尾灯が灯ります（「地図: 自動（昼夜）」のとき）。
+
+使っているデータの一覧と、実データ・推計の区別は [DATA_SOURCES.md](DATA_SOURCES.md) に、更新履歴は [CHANGELOG.md](CHANGELOG.md) にまとめています。
+
+### 運行シミュレーションの仕組み
+
+各系統について「運転間隔・運転時間帯・停車駅・最高速度・停車時間」を定め、
+始発駅の発車時刻から各駅の発着時刻を計算し、駅間は加速→巡航→減速の台形速度で補間しています。
+時刻から位置が決定的に決まるので、サーバは不要です。
+
+路線や運行パターンを変えるときは `tools/build_network.py` の `LINES` / `SERVICES` を編集して再生成します。
+
+```sh
+python3 tools/build_network.py   # 駅座標データを取得して data/network.js を再生成
+```
+
+### 線路を実際の形にする (国土数値情報 / OpenStreetMap)
+
+```sh
+# 国土数値情報 鉄道データ (https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N02-2024.html) を使う (推奨)
+python3 tools/extract_n02_stations.py N02-24_Station.geojson   # 駅の座標も国土数値情報にする
+python3 tools/build_tracks.py --n02 N02-24_RailroadSection.geojson
+# または OpenStreetMap (Overpass API。混雑時は OVERPASS_URL でミラーを指定)
+python3 tools/build_tracks.py
+python3 tools/build_network.py   # track_shapes.json があれば自動で取り込む
+./tools/sync_public.sh           # 公開リポジトリへコピー
+```
+
+駅から 350m 以内の線路に吸着させ、線路網の最短経路で駅間をつなぎます（側線・渡り線は避ける）。
+経路が見つからない区間や直線距離の 3 倍を超える遠回りになる区間は、直線のまま残してログに出します。
+取り込んだ場合は、公開ページの出典に「© OpenStreetMap contributors (ODbL)」を追記してください。
+
+### フェリー・空港
+
+```sh
+python3 tools/build_ferries.py    # OpenStreetMap の航路 (tools/osm_ferry.json) と運航パターンから tools/extra/ferries.json
+python3 tools/build_airports.py   # 国土数値情報 C28 と空港管理状況調書 (tools/src/) から tools/extra/airports.json
+python3 tools/build_network.py    # tools/extra/ も自動で取り込む
+```
+
+### 実際の時刻表で走らせる (GTFS / GTFS-JP)
+
+```sh
+python3 tools/import_gtfs.py feed.zip --date 20261005 \
+    --group iyotetsu_gtfs --group-name "伊予鉄 (時刻表データ)" \
+    --replaces iyo_takahama,iyo_yokogawara,iyo_gunchu
+python3 tools/build_network.py   # tools/gtfs_services.json があれば自動で取り込む
+```
+
+指定日に運行する便だけを取り込み、便ごとの発着時刻でそのまま走らせます（`--replaces` の路線の推計ダイヤは置き換え）。
+shapes.txt があればその線形を使います。発車案内・停車駅一覧・到達圏もすべて時刻表の時刻で計算されます。
+
+## テスト
+
+```sh
+node --test tests/*.test.js              # 運行シミュレーション (所要時間・深夜・発車案内・到達圏・便ごとの時刻)
+python3 -m unittest discover tests       # 線路形状の経路探索・GTFS の運行日判定など
+node tools/check_honsu.js                # 区間ごとの平日の本数を「全国鉄道運行本数データ」と比較
+```
+
+## 現状の制約 (プロトタイプ)
+
+- **ことでん・とさでん交通・阿佐海岸鉄道は、公開されている時刻表データ（GTFS）で走ります**（平日／土休日ダイヤを日付で自動切り替え）。
+- **それ以外（伊予鉄・JR 四国など）の列車位置は実際の運行ではありません。** JR 四国は 1 日の本数を「全国鉄道運行本数データ」に、主な駅（高松・松山・今治・八幡浜・宇和島・高知・徳島・多度津）の発車時刻を公式時刻表の「始発・終発・毎時◯分」のパターンに合わせた推計です（数分〜十数分ずれることがあります）。遅延・運休・臨時列車は反映されません。
+  坊っちゃん列車や 6 系統などの運行区間・時刻は変更があり得るので要確認です。
+- 線路の形は「国土数値情報（鉄道データ）」（国土交通省）を加工して作成しています（ことでん志度線 瓦町〜今橋 の 1 区間のみ直線。瀬戸大橋線 児島〜宇多津も本四備讃線の実際の線形）。
+- 瀬戸大橋線は四国側（児島から先）のみで、岡山方面の列車は児島で現れ・消えます。宇多津での併結・切り離しの時刻は推計です。
+- 列車は終点に着くと 1〜2 分停車したあと消えます（到着列車がそのまま折り返す運用は再現していません）。
+- JR 四国は平日と土休日で同じ本数です（伊予鉄 郊外電車と GTFS の路線は区別あり）。
+
+## 今後の発展案
+
+2. **実ダイヤ化**: 伊予鉄グループや JR 四国が公開する GTFS / GTFS-JP があれば取り込み、パターン推計を実時刻表に置き換える
+   (Mini Tokyo 3D にも [GTFS プラグイン](https://www.npmjs.com/package/mt3d-plugin-gtfs) があります)。
+3. **リアルタイム化**: 伊予鉄の電車・バス接近情報など、列車位置のデータが利用可能になれば遅延を反映。
+4. **バス・フェリー**: 伊予鉄バス、松山観光港〜広島・呉のフェリー、しまなみ海道方面など。
+5. **研究用途**: 時刻ごとの運行本数や到達圏 (等時間圏) の可視化、観光動線と重ねた分析など。
+
+## データ出典
+
+- 駅の位置・線路: 「国土数値情報（鉄道データ）」（国土交通省）を加工して作成（CC BY 4.0）
+- 時刻表: ことでん（高松琴平電気鉄道）GTFS、とさでん交通 GTFS、阿佐海岸鉄道 GTFS、高知県営渡船・須崎市営巡航船・宿毛市営 沖の島航路・鳴門市営渡船 GTFS（いずれも CC BY 4.0）
+- 航路の形: © OpenStreetMap contributors
+- 区間ごとの運行本数: [全国鉄道運行本数データ](https://gtfs-gis.jp/railway_honsu/)（CC BY 4.0）
+- 空港: 「国土数値情報（空港データ）」（国土交通省）を加工して作成、国土交通省「空港管理状況調書」
+- 駅名・駅の並び: [駅データ.jp](https://ekidata.jp/) (取得元: [piuccio/open-data-jp-railway-stations](https://github.com/piuccio/open-data-jp-railway-stations))。
+  公開・再配布する場合は駅データ.jp の利用規約を確認してください。
+- 地図: © OpenStreetMap contributors, OpenFreeMap, OpenMapTiles / 国土地理院
+- 標高: AWS Terrain Tiles (Mapzen)
